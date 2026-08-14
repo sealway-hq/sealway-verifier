@@ -1,0 +1,126 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+# contextcheck is deliberately not enabled. Every network operation already takes
+# a context, while the Merkle primitives are pure functions that intentionally do
+# not, so that a standalone calculator can call them directly.
+linters:
+  default: none
+  enable:
+    # Correctness and static analysis.
+    - govet
+    - staticcheck
+    - ineffassign
+    - errcheck
+    - bodyclose
+    - copyloopvar
+    - durationcheck
+    - errorlint
+    - exhaustive
+    - makezero
+    - nilerr
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    # Security oriented checks.
+    - gosec
+    # Unused and dead code.
+    - unused
+    - unconvert
+    - unparam
+    - wastedassign
+    # Modern Go.
+    - usestdlibvars
+    - intrange
+    - perfsprint
+    # Readability and consistency.
+    - misspell
+    - nakedret
+    - nolintlint
+    - predeclared
+    - revive
+    - wsl_v5
+
+  settings:
+    errcheck:
+      # An explicit blank assignment is how deliberate disregard is expressed, so
+      # only unassigned results are reported.
+      check-type-assertions: true
+      check-blank: false
+    exhaustive:
+      default-signifies-exhaustive: true
+    gosec:
+      excludes:
+        # Reading a path the operator supplied on the command line is the whole
+        # point of the tool.
+        - G304
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    misspell: {}
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+        - name: package-comments
+        - name: indent-error-flow
+        - name: errorf
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: increment-decrement
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: var-declaration
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: unreachable-code
+    staticcheck:
+      checks:
+        - all
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Test files exercise hostile input and deliberately awkward shapes, and
+      # navigate decoded JSON with type assertions that are meant to panic when
+      # a fixture stops matching.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - noctx
+          - unparam
+      # The fixture generator is a test helper and mirrors production shapes.
+      - path: internal/prooftest/
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/sealway-hq/sealway-verifier
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
