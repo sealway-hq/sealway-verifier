@@ -57,18 +57,21 @@ func TestHumanRendersEveryStage(t *testing.T) {
 	assert.Contains(t, out, "INVALID")
 	assert.Contains(t, out, "Result")
 	assert.Contains(t, out, "INVALID")
-	assert.Contains(t, out, "3 check(s): 1 valid, 1 invalid, 1 skipped.")
+	assert.Contains(t, out, "3 check(s): 1 valid, 1 invalid, 0 indeterminate, 1 skipped.")
 }
 
 // TestHumanAlwaysExplainsSkipsAndFailures pins the promise that a skipped or
 // failing step never appears without its reason.
+//
+// Assertions run against whitespace-normalised output: the promise is about the
+// text being present, not about where the wrapper happens to break a line.
 func TestHumanAlwaysExplainsSkipsAndFailures(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	require.NoError(t, render.Human(&buf, sample(), render.Options{}))
 
-	out := buf.String()
+	out := flatten(buf.String())
 	assert.Contains(t, out, "No original source file was provided")
 	assert.Contains(t, out, "does not equal the certified proof Merkle root")
 
@@ -76,6 +79,10 @@ func TestHumanAlwaysExplainsSkipsAndFailures(t *testing.T) {
 	assert.Contains(t, out, "expected: aaaa")
 	assert.Contains(t, out, "computed: bbbb")
 }
+
+// flatten collapses every run of whitespace into a single space, so that
+// assertions describe content rather than layout.
+func flatten(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func TestHumanHidesSuccessfulMessagesUnlessVerbose(t *testing.T) {
 	t.Parallel()
@@ -134,6 +141,66 @@ func stripANSI(s string) string {
 	}
 
 	return out.String()
+}
+
+// TestIndeterminateIsRenderedDistinctly checks the reader can tell "not
+// attempted" from "attempted and inconclusive", which is the whole point of the
+// two statuses being separate.
+func TestIndeterminateIsRenderedDistinctly(t *testing.T) {
+	t.Parallel()
+
+	b := report.NewBuilder()
+	b.Add("timestamp", "Qualified timestamp",
+		report.NewSkipped("a.skipped", "Not attempted", "blockchain verification was disabled"),
+		report.NewIndeterminate("a.indeterminate", "Attempted, inconclusive",
+			"the trusted list could not be authenticated").
+			WithDetail("trust_list", "ES"))
+
+	var buf bytes.Buffer
+	require.NoError(t, render.Human(&buf, b.Build(), render.Options{}))
+
+	out := flatten(buf.String())
+
+	assert.Contains(t, out, "SKIPPED Not attempted")
+	assert.Contains(t, out, "INDETERMINATE Attempted, inconclusive")
+	assert.Contains(t, out, "the trusted list could not be authenticated")
+
+	// Details are shown for an indeterminate step too, because they say what was
+	// missing.
+	assert.Contains(t, out, "trust_list: ES")
+
+	assert.Contains(t, out, "0 valid, 0 invalid, 1 indeterminate, 1 skipped")
+}
+
+// TestStatusLabelsShareOneColumn keeps the titles aligned whatever the status,
+// including the longest label.
+func TestStatusLabelsShareOneColumn(t *testing.T) {
+	t.Parallel()
+
+	b := report.NewBuilder()
+	b.Add("s", "Section",
+		report.NewValid("a", "Alpha", "ok"),
+		report.NewInvalid("b", "Beta", "no"),
+		report.NewSkipped("c", "Gamma", "no"),
+		report.NewIndeterminate("d", "Delta", "no"))
+
+	var buf bytes.Buffer
+	require.NoError(t, render.Human(&buf, b.Build(), render.Options{}))
+
+	var columns []int
+
+	for _, line := range strings.Split(buf.String(), "\n") {
+		for _, title := range []string{"Alpha", "Beta", "Gamma", "Delta"} {
+			if strings.Contains(line, title) {
+				columns = append(columns, strings.Index(line, title))
+			}
+		}
+	}
+
+	require.Len(t, columns, 4)
+	for _, c := range columns {
+		assert.Equal(t, columns[0], c, "titles must start in the same column")
+	}
 }
 
 func TestResultLabels(t *testing.T) {
