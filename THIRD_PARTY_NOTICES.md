@@ -15,6 +15,7 @@ Shield License 1.0.0. Every one of them is permissive; none is copyleft.
 | `github.com/pdfcpu/pdfcpu` | v0.15.0 | Apache-2.0 | Reading the certificate document and extracting its embedded attachments |
 | `github.com/digitorus/pkcs7` | v0.0.0-20250730155240 | MIT | CMS SignedData parsing and signature verification for the RFC 3161 token |
 | `github.com/hyperscale-stack/merkle` | v1.0.0 | MIT (see note below) | The Merkle tree construction of the public Sealway proof profile |
+| `github.com/beevik/etree` | v1.7.0 | BSD-2-Clause | XML tree used to canonicalise and verify the signatures of the European Trusted Lists |
 | `github.com/spf13/cobra` | v1.10.2 | Apache-2.0 | Command line interface |
 | `github.com/spf13/pflag` | v1.0.10 | BSD-3-Clause | Flag parsing, required by cobra |
 | `github.com/inconshreveable/mousetrap` | v1.1.0 | Apache-2.0 | Required by cobra on Windows |
@@ -65,6 +66,25 @@ intent is unambiguous and the module is published by the same authors as this
 repository, so this is a packaging omission rather than a licensing question. It
 should be corrected upstream before this repository is made public, so that the
 dependency carries its licence text the way redistribution expects.
+
+## Note on XML signature verification
+
+The signatures of the European Trusted Lists are verified by
+`packages/verifier/trustlist/xmldsig`, written for this repository rather than
+taken from a dependency.
+
+No available Go implementation can verify the real lists. The maintained
+general-purpose library, `github.com/russellhaering/goxmldsig`, caps tree
+traversal at a thousand elements with the limit unreachable through its API, so
+it refuses a national list outright; its own source describes its transform
+handling as purpose-specific. The libraries that do target Trusted Lists,
+`github.com/sirosfoundation/g119612` and `github.com/sirosfoundation/go-trust`,
+reach their XML layer through `replace` directives, and Go does not apply a
+dependency's `replace` to the modules that import it, so neither compiles when
+consumed.
+
+Only the algorithms a Trusted List legitimately uses are implemented, and
+everything else is refused rather than approximated.
 
 ## What this project deliberately avoids
 

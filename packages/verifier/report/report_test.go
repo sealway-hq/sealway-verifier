@@ -69,6 +69,64 @@ func TestOutOfScopeSkipDoesNotDowngrade(t *testing.T) {
 	assert.Equal(t, 0, r.Summary.SkippedAffectingCompleteness)
 }
 
+// TestIndeterminateNeverYieldsComplete pins the rule that an absence of proof is
+// neither success nor failure: it downgrades the result without invalidating it.
+func TestIndeterminateNeverYieldsComplete(t *testing.T) {
+	t.Parallel()
+
+	b := report.NewBuilder()
+	b.Add("timestamp", "Timestamp",
+		report.NewValid("timestamp.signature", "CMS signature", "ok"),
+		report.NewIndeterminate("timestamp.qualified", "Qualified status",
+			"the trusted list could not be authenticated"))
+
+	r := b.Build()
+	assert.Equal(t, report.ResultPartialValid, r.Result)
+	assert.Equal(t, 1, r.Summary.Indeterminate)
+	assert.Zero(t, r.Summary.Invalid)
+	assert.Zero(t, r.Summary.Skipped)
+	assert.True(t, r.Valid(), "indeterminate is not a failure")
+}
+
+// TestInvalidBeatsIndeterminate keeps a real failure visible even when another
+// step could not conclude.
+func TestInvalidBeatsIndeterminate(t *testing.T) {
+	t.Parallel()
+
+	b := report.NewBuilder()
+	b.Add("a", "A",
+		report.NewIndeterminate("a.1", "one", "no material"),
+		report.NewInvalid("a.2", "two", "digest mismatch"))
+
+	r := b.Build()
+	assert.Equal(t, report.ResultInvalid, r.Result)
+	assert.Equal(t, 1, r.Summary.Indeterminate)
+	assert.Equal(t, 1, r.Summary.Invalid)
+	assert.False(t, r.Valid())
+}
+
+// TestIndeterminateIsDistinctFromSkipped guards the distinction the two statuses
+// exist to express.
+func TestIndeterminateIsDistinctFromSkipped(t *testing.T) {
+	t.Parallel()
+
+	indeterminate := report.NewIndeterminate("a", "A", "attempted, no conclusion")
+	skipped := report.NewSkipped("b", "B", "not attempted")
+
+	assert.Equal(t, report.StatusIndeterminate, indeterminate.Status)
+	assert.Equal(t, report.StatusSkipped, skipped.Status)
+	assert.NotEqual(t, indeterminate.Status, skipped.Status)
+	assert.Equal(t, "indeterminate", report.StatusIndeterminate.String())
+
+	// Both must always say why.
+	assert.NotEmpty(t, indeterminate.Message)
+	assert.NotEmpty(t, skipped.Message)
+
+	// Both count towards completeness, so neither can be silently ignored.
+	assert.True(t, indeterminate.AffectsCompleteness)
+	assert.True(t, skipped.AffectsCompleteness)
+}
+
 func TestAggregationInvalidWins(t *testing.T) {
 	t.Parallel()
 

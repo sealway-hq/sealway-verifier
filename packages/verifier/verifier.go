@@ -214,7 +214,7 @@ func (r *run) execute(ctx context.Context, rs io.ReadSeeker) (*Report, error) {
 
 	r.verifySources(ctx)
 	r.verifyProofMerkle(ctx)
-	r.verifyTimestamp(cert)
+	r.verifyTimestamp(ctx, cert)
 	r.verifyAccumulator()
 	r.verifyAnchors(ctx)
 

@@ -41,24 +41,34 @@ wrong even if the tests pass.
    the RFC 3161 token are always read from the certificate's embedded
    attachments. The loose copies a bundle carries are *never* a fallback. There
    is exactly one verification path for ZIP and PDF input.
-2. **Never report a missing prerequisite as `VALID`.** A step that could not be
-   performed is `SKIPPED` with a message that says why. There are exactly three
-   statuses: `valid`, `invalid`, `skipped`.
+2. **Never report a missing prerequisite as `VALID`, and never turn an absence
+   of proof into a proof of absence.** There are four statuses: `valid`,
+   `invalid`, `skipped` and `indeterminate`. `skipped` means the step was not
+   attempted; `indeterminate` means it was attempted and could not conclude.
+   Both always say why, and neither ever reads as success.
 3. **Never overclaim.** A valid CMS signature is not a trusted chain, and a
    trusted chain is not eIDAS qualification. Keep the three apart in code and in
-   report wording.
-4. **Rebuild from evidence, not from claims.** When source files are available,
+   report wording. The ETSI statement inside a token claiming qualified status is
+   written by its issuer and is never sufficient.
+4. **Qualified status comes only from an authenticated Trusted List, at the
+   asserted time.** Nothing is read before its signature has been verified: the
+   list of lists against the bootstrap anchor, a national list against the
+   certificates the list of lists pins for it. Attribution is on the
+   certification path, never on the signing certificate alone, and every
+   temporal question is answered at `genTime` rather than at the moment of
+   verification.
+5. **Rebuild from evidence, not from claims.** When source files are available,
    the Merkle tree is rebuilt from their recomputed digests, never from the
    manifest's leaf hashes. Declared roots are recomputed before being compared.
-5. **A transaction existing proves nothing.** An anchor is verified by reading
+6. **A transaction existing proves nothing.** An anchor is verified by reading
    the payload actually carried on chain and comparing it with the accumulator
    root.
-6. **Errors and verification failures are different.** An unreadable input is an
+7. **Errors and verification failures are different.** An unreadable input is an
    operational error (exit 2). A proof that does not hold is a verification
    outcome (exit 1). Never conflate them.
-7. **An unreachable network skips, never fails.** A third party being down must
+8. **An unreachable network skips, never fails.** A third party being down must
    not look like a broken proof.
-8. **Untrusted input must never panic.** Archives, certificates, manifests,
+9. **Untrusted input must never panic.** Archives, certificates, manifests,
    source files and endpoint responses are all hostile.
 
 ---
@@ -249,16 +259,40 @@ packages/verifier/         public API and verification pipeline
   merkle/                  Merkle operations of the public profile
   pdf/                     certificate attachment extraction
   timestamp/               RFC 3161 parsing and signature verification
+  trustlist/               European Trusted Lists, ETSI TS 119 612
+    xmldsig/               XML signature verification of those lists
+  trust/                   trust material and the providers that obtain it
+    bootstrap/             the anchor published in the Official Journal
+  eidas/                   qualified status determination
   anchor/                  provider interface and public network implementations
   bundle/                  safe archive reading
   report/                  canonical verification report
   source/                  filesystem helpers, not imported by the core
-internal/prooftest/        synthetic proof generator for tests
+internal/prooftest/        synthetic proofs and Trusted Lists for tests
 internal/mocks/            generated mocks
 internal/pdfconfig/        guarded setup of the PDF library's global state
 tests/functional/          realistic proof structures, including tampered ones
 tests/e2e/                 the production fixture in testdata/
 ```
+
+### Trust material
+
+`packages/verifier/trust` is deliberately split from everything that fetches:
+the engine is handed bytes and never reaches the network or the filesystem
+itself. That is what lets one implementation serve the command line tool, a
+Wails desktop application and a browser build, the last of which cannot read the
+official endpoints because they send no cross-origin headers.
+
+A mirror is a transport, never an authority. It serves the official signed
+documents unchanged and the client verifies the European signatures itself, so a
+compromised mirror can withhold or delay material but cannot invent a qualified
+service. Never add a format that ships a list of certificates somebody declared
+trustworthy in place of the signed documents.
+
+The bootstrap anchor in `trust/bootstrap` is the one thing a caller is asked to
+take on faith. It is shipped as readable PEM with its fingerprint recorded in the
+source and checked by a test. The set is append-only: add on rotation, never
+remove, or lists issued under an older anchor stop verifying.
 
 ---
 

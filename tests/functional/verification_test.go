@@ -12,11 +12,13 @@ package functional_test
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -28,6 +30,7 @@ import (
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/anchor/algorand"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/anchor/evm"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/report"
+	"github.com/sealway-hq/sealway-verifier/packages/verifier/trust"
 )
 
 const algorandTxID = "3DZT62LVBKVIYULEPC3QGNEWVMKZEBHXA2PX7BBYU4TL7ZZI2EQQ"
@@ -87,15 +90,52 @@ func chainServer(t *testing.T, payload []byte) (algorandEndpoint, evmEndpoint st
 
 // online returns a verifier whose anchor providers point at a local test server
 // serving the given anchored payload.
-func online(t *testing.T, payload []byte) *verifier.Verifier {
+func online(t *testing.T, p *prooftest.Proof, payload []byte) *verifier.Verifier {
 	t.Helper()
 
 	algorandEndpoint, evmEndpoint := chainServer(t, payload)
+	provider, signer := trustFor(t, p)
 
 	return verifier.New(
 		verifier.WithAnchorEndpoint(algorand.Network, algorandEndpoint),
 		verifier.WithAnchorEndpoint(evm.NetworkPolygon, evmEndpoint),
+		verifier.WithTrustProvider(provider),
+		verifier.WithTrustListSigners(signer),
 	)
+}
+
+// trustFor builds a Trusted List recognising the throwaway authority that signed
+// the timestamp of p, so that a complete verification is reachable without
+// touching the real European publications.
+func trustFor(t *testing.T, p *prooftest.Proof) (trust.Provider, *x509.Certificate) {
+	t.Helper()
+
+	scheme, err := prooftest.NewTrustScheme("ES")
+	require.NoError(t, err)
+
+	lotl, err := scheme.LOTL(prooftest.LOTLOptions{})
+	require.NoError(t, err)
+
+	list, err := scheme.TrustList(prooftest.TrustListOptions{
+		Services: []prooftest.TrustService{{
+			ProviderName: "Test Trust Services",
+			ServiceName:  "Qualified electronic time stamps",
+			Identity:     p.TSA.RootCert,
+			Status:       prooftest.StatusGranted,
+			StatusSince:  time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC),
+		}},
+	})
+	require.NoError(t, err)
+
+	files, err := prooftest.SnapshotFiles(lotl, map[string][]byte{"ES": list})
+	require.NoError(t, err)
+
+	mapFS := fstest.MapFS{}
+	for name, data := range files {
+		mapFS[name] = &fstest.MapFile{Data: data}
+	}
+
+	return trust.NewSnapshot(mapFS, "test snapshot"), scheme.LOTLSigner.Certificate
 }
 
 func offline() *verifier.Verifier { return verifier.New(verifier.WithOffline()) }
@@ -144,7 +184,7 @@ func TestBundleCompleteVerification(t *testing.T) {
 
 	p := newProof(t, prooftest.Options{})
 
-	r, err := verifyBundle(t, online(t, p.AccumulatorRoot), p, prooftest.BundleOptions{})
+	r, err := verifyBundle(t, online(t, p, p.AccumulatorRoot), p, prooftest.BundleOptions{})
 	require.NoError(t, err)
 
 	assert.Equal(t, report.ResultCompleteValid, r.Result)
@@ -184,7 +224,7 @@ func TestCertificateWithSourcesCompleteVerification(t *testing.T) {
 
 	p := newProof(t, prooftest.Options{})
 
-	r, err := online(t, p.AccumulatorRoot).VerifyCertificate(context.Background(),
+	r, err := online(t, p, p.AccumulatorRoot).VerifyCertificate(context.Background(),
 		bytes.NewReader(p.Certificate), sourcesFor(p.Files))
 	require.NoError(t, err)
 
@@ -197,7 +237,7 @@ func TestCertificateOnlyPartialVerification(t *testing.T) {
 
 	p := newProof(t, prooftest.Options{})
 
-	r, err := online(t, p.AccumulatorRoot).VerifyCertificate(context.Background(),
+	r, err := online(t, p, p.AccumulatorRoot).VerifyCertificate(context.Background(),
 		bytes.NewReader(p.Certificate), nil)
 	require.NoError(t, err)
 
@@ -367,7 +407,7 @@ func TestAnchorPayloadMustCarryTheRoot(t *testing.T) {
 
 	p := newProof(t, prooftest.Options{})
 
-	r, err := verifyBundle(t, online(t, bytes.Repeat([]byte{0x99}, 64)), p, prooftest.BundleOptions{})
+	r, err := verifyBundle(t, online(t, p, bytes.Repeat([]byte{0x99}, 64)), p, prooftest.BundleOptions{})
 	require.NoError(t, err)
 
 	assert.Equal(t, report.ResultInvalid, r.Result)
@@ -485,7 +525,12 @@ func TestReportIsSerializableAndStable(t *testing.T) {
 		assert.NotEmpty(t, c.Title)
 		assert.NotEmpty(t, c.Message, "check %s carries no explanation", c.ID)
 		assert.Contains(t,
-			[]report.Status{report.StatusValid, report.StatusInvalid, report.StatusSkipped},
+			[]report.Status{
+				report.StatusValid,
+				report.StatusInvalid,
+				report.StatusSkipped,
+				report.StatusIndeterminate,
+			},
 			c.Status)
 	}
 }

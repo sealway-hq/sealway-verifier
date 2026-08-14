@@ -3,6 +3,7 @@ module github.com/sealway-hq/sealway-verifier
 go 1.25.0
 
 require (
+	github.com/beevik/etree v1.7.0
 	github.com/digitorus/pkcs7 v0.0.0-20250730155240-ffadbf3f398c
 	github.com/hyperscale-stack/merkle v1.0.0
 	github.com/pdfcpu/pdfcpu v0.15.0

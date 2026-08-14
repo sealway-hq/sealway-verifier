@@ -21,6 +21,16 @@ import (
 // LineWidth is the column at which messages are wrapped.
 const LineWidth = 80
 
+// Status labels are padded to a fixed width so that titles line up. The widest
+// label is INDETERMINATE.
+const statusWidth = len("INDETERMINATE")
+
+// messageIndent is the column at which a check message starts: two leading
+// spaces, the status label and one separating space.
+const messageIndent = 2 + statusWidth + 1
+
+var indent = strings.Repeat(" ", messageIndent)
+
 // JSON writes the canonical report as indented JSON.
 //
 // This is the machine readable contract of the command line interface: it is the
@@ -114,19 +124,21 @@ func (p *printer) check(c report.Check) {
 
 	show := c.Status != report.StatusValid || p.verbose
 	if show && c.Message != "" {
-		for _, line := range wrap(c.Message, LineWidth-11) {
-			p.printf("           %s\n", line)
+		for _, line := range wrap(c.Message, LineWidth-messageIndent) {
+			p.printf("%s%s\n", indent, line)
 		}
 	}
 
-	if c.Status == report.StatusInvalid {
+	// Details carry the values a reader needs to redo the comparison, so they
+	// are shown whenever the step did not simply succeed.
+	if c.Status == report.StatusInvalid || c.Status == report.StatusIndeterminate {
 		p.details(c)
 	}
 }
 
 func (p *printer) details(c report.Check) {
 	for _, k := range c.DetailKeys() {
-		p.printf("           %s: %s\n", k, c.Details[k])
+		p.printf("%s%s: %s\n", indent, k, c.Details[k])
 	}
 }
 
@@ -138,23 +150,30 @@ func (p *printer) result(r *report.Report) {
 		p.printf("%s\n", line)
 	}
 
-	p.printf("\n%d check(s): %d valid, %d invalid, %d skipped.\n",
-		r.Summary.Total, r.Summary.Valid, r.Summary.Invalid, r.Summary.Skipped)
+	p.printf("\n%d check(s): %d valid, %d invalid, %d indeterminate, %d skipped.\n",
+		r.Summary.Total, r.Summary.Valid, r.Summary.Invalid,
+		r.Summary.Indeterminate, r.Summary.Skipped)
 }
 
 // status renders a check status. The label is always written out, so the output
 // never depends on color to be understood.
 func (p *printer) status(s report.Status) string {
+	label, code := "UNKNOWN", yellow
+
 	switch s {
 	case report.StatusValid:
-		return p.colorize("VALID  ", green)
+		label, code = "VALID", green
 	case report.StatusInvalid:
-		return p.colorize("INVALID", red)
+		label, code = "INVALID", red
 	case report.StatusSkipped:
-		return p.colorize("SKIPPED", yellow)
-	default:
-		return p.colorize("UNKNOWN", yellow)
+		label, code = "SKIPPED", yellow
+	case report.StatusIndeterminate:
+		label, code = "INDETERMINATE", yellow
 	}
+
+	// The label is padded before colouring so that the escape sequences never
+	// count towards the column width.
+	return p.colorize(fmt.Sprintf("%-*s", statusWidth, label), code)
 }
 
 func (p *printer) resultLabel(r report.Result) string {
