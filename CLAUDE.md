@@ -164,7 +164,14 @@ make cross         # every release target plus js/wasm
 make mocks         # regenerate test mocks
 make test-live     # anchor checks against the live public networks
 make build         # bin/sealway-verifier
+make wasm          # dist/web, the browser demonstration
+make wasm-test     # the browser module in the js/wasm runtime (needs node)
+make wasm-serve    # build and serve the demonstration
 ```
+
+The browser module is not covered by `make test`: its tests are built for
+`js && wasm` and need the js/wasm runtime. Run `make wasm-test` when touching
+`apps/wasm` or anything the browser build depends on.
 
 `make lint` must be clean. Do not silence a linter with `//nolint` unless the
 finding is genuinely wrong; when you do, give the specific linter and a reason.
@@ -254,6 +261,7 @@ No dependency may require an API key, an account or any credential.
 
 ```text
 apps/cli/                  command line interface (thin adapter)
+apps/wasm/                 browser module (thin adapter) and demonstration page
 packages/verifier/         public API and verification pipeline
   proof/                   manifest model and validation
   merkle/                  Merkle operations of the public profile

@@ -68,6 +68,10 @@ type Status = report.Status
 // Result is the aggregated outcome of a verification run.
 type Result = report.Result
 
+// ReportSchemaVersion is the version of the report structure, so that a front
+// end can state which contract it was built against.
+const ReportSchemaVersion = report.SchemaVersion
+
 // Re-exported statuses and results, so that a caller can switch on them without
 // importing the report package.
 const (

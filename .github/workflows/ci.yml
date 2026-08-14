@@ -164,3 +164,36 @@ jobs:
           GOOS: js
           GOARCH: wasm
         run: go build ./packages/...
+
+  wasm:
+    name: Browser module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      # The browser module is exercised in the runtime it ships to, through the
+      # JavaScript API a page calls, so that the WebAssembly build is known to
+      # reach the same conclusions as the command line one.
+      - name: Test the browser module in the js/wasm runtime
+        env:
+          GOOS: js
+          GOARCH: wasm
+        run: go test -exec "$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./apps/wasm/
+
+      # Source behind a js && wasm build tag is invisible to the ordinary lint
+      # job, so it is linted for the platform it is written for.
+      - uses: golangci/golangci-lint-action@v9
+        env:
+          GOOS: js
+          GOARCH: wasm
+        with:
+          version: v2.12.2
+          args: ./apps/wasm/...
+
+      - name: Build the demonstration page
+        run: make wasm

@@ -313,6 +313,53 @@ with `--trust-source https://…`.
 
 ---
 
+## In a browser
+
+The same verification code compiles to WebAssembly, so a page can verify a proof
+without uploading it anywhere and without contacting any Sealway service.
+
+```bash
+make wasm-serve   # builds dist/web and serves it on http://localhost:8080
+```
+
+The page picks a `.zip` bundle, hands the bytes to the module and renders the
+canonical report — the same report `--json` writes. Building it separately:
+
+```bash
+make wasm         # dist/web: the module, the page and a Trusted List snapshot
+```
+
+### The API a page calls
+
+```js
+const report = JSON.parse(await sealwayVerifier.verify(bytes, {
+  verifyAnchors: false,   // read the public blockchains, when they allow it
+  timeoutSeconds: 20,
+  trust: { lotl, lists: { ES } },   // the official signed documents, unchanged
+}));
+
+sealwayVerifier.schemaVersion;      // the report contract this build produces
+```
+
+`verify` takes a `Uint8Array` or an `ArrayBuffer` and returns a promise. It
+resolves with the report as JSON, and rejects only on an operational failure such
+as an unreadable archive — a proof that does not hold resolves normally, with a
+result of `invalid`.
+
+The trust material is handed in by the page rather than fetched by the module,
+because the official European endpoints send no cross-origin headers. Supplying
+it is not a way to be believed: the module verifies the European signatures
+against its own pinned anchor, so material that is not genuinely signed by the
+Commission cannot produce a qualified verdict — it produces `indeterminate`. A
+page that supplies nothing gets `indeterminate` too, never a claim of
+qualification.
+
+Anchors are only read when the page asks. Public endpoints may or may not allow a
+cross-origin request; when they do not, the anchor checks are reported as skipped
+rather than failed.
+
+---
+
 ## What a successful check proves
 
 | Check | Proves |
@@ -413,6 +460,8 @@ make cover       # coverage profile and total
 make fuzz        # short fuzzing run over every target
 make cross       # every release target plus js/wasm
 make build       # bin/sealway-verifier
+make wasm        # dist/web, the browser demonstration
+make wasm-test   # the browser module, in the js/wasm runtime (needs node)
 ```
 
 The end-to-end suite verifies a real production proof bundle in `testdata/`, with
@@ -428,6 +477,7 @@ make test-live   # or: SEALWAY_VERIFIER_LIVE_TESTS=1 go test ./tests/e2e/
 
 ```text
 apps/cli/                  command line interface
+apps/wasm/                 browser module and its demonstration page
 packages/verifier/         public API and verification pipeline
   proof/                   manifest model and validation
   merkle/                  Merkle operations of the public profile
