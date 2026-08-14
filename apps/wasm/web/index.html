@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sealway Verifier — browser demonstration</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Sealway Verifier</h1>
+  <p class="lede">
+    Verify a Sealway proof entirely inside this page. The proof is read by
+    WebAssembly in your browser: nothing is uploaded, and no Sealway service is
+    contacted.
+  </p>
+</header>
+
+<main>
+  <section id="loading" class="panel">
+    <p class="status" id="loading-status">Loading the verifier…</p>
+    <p class="hint">The WebAssembly module is a few megabytes; it is fetched once.</p>
+  </section>
+
+  <section id="input" class="panel" hidden>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept=".zip,.pdf,application/zip,application/pdf">
+      <span class="drop-title">Choose a proof bundle, or drop it here</span>
+      <span class="drop-hint">a <code>.zip</code> bundle, verified locally</span>
+    </label>
+
+    <div class="options">
+      <label>
+        <input type="checkbox" id="anchors">
+        Read the blockchain anchors
+        <span class="hint">
+          Needs the public endpoints to allow cross-origin requests; when they do
+          not, the anchor checks are reported as skipped rather than failed.
+        </span>
+      </label>
+    </div>
+
+    <p class="trust-state" id="trust-state"></p>
+  </section>
+
+  <section id="running" class="panel" hidden>
+    <p class="status">Verifying…</p>
+    <div class="bar"><div class="bar-fill"></div></div>
+  </section>
+
+  <section id="error" class="panel error" hidden>
+    <h2>The proof could not be read</h2>
+    <p id="error-message"></p>
+    <p class="hint">
+      This is a tool failure, not a verdict on the proof: nothing has been
+      established either way.
+    </p>
+  </section>
+
+  <section id="result" hidden>
+    <div class="verdict" id="verdict">
+      <span class="verdict-label" id="verdict-label"></span>
+      <span class="verdict-id" id="verdict-id"></span>
+    </div>
+
+    <p class="explanation" id="explanation"></p>
+
+    <div id="sections"></div>
+
+    <details class="raw">
+      <summary>The report as JSON</summary>
+      <p class="hint">
+        This is the canonical report, byte for byte what the command line tool
+        writes with <code>--json</code>.
+      </p>
+      <pre id="raw"></pre>
+    </details>
+
+    <button id="again" type="button">Verify another proof</button>
+  </section>
+</main>
+
+<footer>
+  <p>
+    Four outcomes are possible for each step, and two of them mean the question
+    was not answered.
+    <strong class="s-valid">valid</strong> and
+    <strong class="s-invalid">invalid</strong> are conclusions;
+    <strong class="s-skipped">skipped</strong> means the step was not attempted,
+    and <strong class="s-indeterminate">indeterminate</strong> means it was
+    attempted and the available evidence did not settle it. Neither ever reads as
+    success.
+  </p>
+</footer>
+
+<script src="wasm_exec.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>

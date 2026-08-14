@@ -3,6 +3,8 @@ GOLANGCI       ?= golangci-lint
 MOCKERY        ?= mockery
 MOCKERY_VERSION ?= v3.7.3
 BIN            ?= bin/sealway-verifier
+WEB_OUT        ?= dist/web
+WEB_PORT       ?= 8080
 FUZZTIME     ?= 30s
 FUZZ_TARGETS := FuzzManifestParse FuzzHashUnmarshal FuzzMerkleProofVerify \
                 FuzzTimestampParse FuzzBundleOpen FuzzVerifyBundle FuzzVerifyCertificate
@@ -86,6 +88,41 @@ cross:
 		echo "built $$target"; \
 	done
 	@GOOS=js GOARCH=wasm CGO_ENABLED=0 $(GO) build ./packages/... && echo "built js/wasm"
+
+# Exercise the browser module in the js/wasm runtime, through the JavaScript API
+# a page actually calls. Needs node, which provides that runtime outside a
+# browser.
+.PHONY: wasm-test
+wasm-test:
+	GOOS=js GOARCH=wasm $(GO) test -exec "$$($(GO) env GOROOT)/lib/wasm/go_js_wasm_exec" ./apps/wasm/
+
+# Source guarded by a js && wasm build tag is invisible to an ordinary lint run,
+# so it gets its own.
+.PHONY: wasm-lint
+wasm-lint:
+	GOOS=js GOARCH=wasm $(GOLANGCI) run ./apps/wasm/...
+
+# Build the browser demonstration into dist/web: the WebAssembly module, the
+# Go runtime shim, the static page, and the European Trusted Lists it serves
+# from its own origin because the official endpoints allow no cross-origin
+# request.
+.PHONY: wasm
+wasm:
+	@mkdir -p $(WEB_OUT)/trust/lists
+	GOOS=js GOARCH=wasm CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" \
+		-o $(WEB_OUT)/sealway.wasm ./apps/wasm
+	cp "$$($(GO) env GOROOT)/lib/wasm/wasm_exec.js" $(WEB_OUT)/wasm_exec.js
+	cp apps/wasm/web/index.html apps/wasm/web/demo.js apps/wasm/web/style.css $(WEB_OUT)/
+	gunzip -c testdata/trust/eu-lotl.xml.gz > $(WEB_OUT)/trust/lotl.xml
+	gunzip -c testdata/trust/es-trusted-list.xml.gz > $(WEB_OUT)/trust/lists/es.xml
+	@echo "built $(WEB_OUT) ($$(du -h $(WEB_OUT)/sealway.wasm | cut -f1) of WebAssembly)"
+
+# Serve the demonstration. A server is needed because a module cannot be
+# instantiated from a file:// origin.
+.PHONY: wasm-serve
+wasm-serve: wasm
+	@echo "http://localhost:$(WEB_PORT)"
+	@cd $(WEB_OUT) && python3 -m http.server $(WEB_PORT)
 
 .PHONY: clean
 clean:
