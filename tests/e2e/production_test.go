@@ -198,7 +198,7 @@ func TestProductionBundleVerifiesCompletely(t *testing.T) {
 
 	archive := fixtureBytes(t)
 
-	v := verifier.New(recordedChain(t)...)
+	v := verifier.New(append(recordedChain(t), verifier.WithTrustProvider(trustSnapshot(t)))...)
 
 	r, err := v.VerifyBundle(context.Background(), bytes.NewReader(archive), int64(len(archive)))
 	require.NoError(t, err)
@@ -239,13 +239,17 @@ func TestProductionBundleVerifiesCompletely(t *testing.T) {
 		assert.Equal(t, report.StatusValid, statusOf(t, r, id), "check %s", id)
 	}
 
-	// Nothing is claimed about trust or eIDAS qualification.
-	for _, id := range []string{"timestamp.trust_chain", "timestamp.qualified", "certificate.signature"} {
-		c, ok := r.Check(id)
-		require.True(t, ok)
-		assert.Equal(t, report.StatusSkipped, c.Status)
-		assert.False(t, c.AffectsCompleteness)
-	}
+	// Trust and qualification are established from the Trusted Lists, and are
+	// separate steps from the signature that precedes them.
+	assert.Equal(t, report.StatusValid, statusOf(t, r, "timestamp.trust_chain"))
+	assert.Equal(t, report.StatusValid, statusOf(t, r, "timestamp.qualified"))
+
+	// Document signatures remain outside the scope of this version, and saying so
+	// does not make the verification incomplete.
+	signature, ok := r.Check("certificate.signature")
+	require.True(t, ok)
+	assert.Equal(t, report.StatusSkipped, signature.Status)
+	assert.False(t, signature.AffectsCompleteness)
 }
 
 // TestProductionProofIsInternallyCorrect asserts the public cryptographic
@@ -305,7 +309,7 @@ func TestProductionManifestMatchesTheDeclaredFormat(t *testing.T) {
 func TestProductionCertificateAloneIsPartial(t *testing.T) {
 	t.Parallel()
 
-	v := verifier.New(recordedChain(t)...)
+	v := verifier.New(append(recordedChain(t), verifier.WithTrustProvider(trustSnapshot(t)))...)
 
 	r, err := v.VerifyCertificate(context.Background(), bytes.NewReader(certificate(t)), nil)
 	require.NoError(t, err)
@@ -336,7 +340,7 @@ func TestProductionCertificateWithSourceIsComplete(t *testing.T) {
 		},
 	}
 
-	v := verifier.New(recordedChain(t)...)
+	v := verifier.New(append(recordedChain(t), verifier.WithTrustProvider(trustSnapshot(t)))...)
 
 	r, err := v.VerifyCertificate(context.Background(),
 		bytes.NewReader(certificate(t)), []verifier.Source{src})

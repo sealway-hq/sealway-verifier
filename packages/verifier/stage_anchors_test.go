@@ -68,7 +68,13 @@ func TestAnchorProviderReceivesTheCertifiedData(t *testing.T) {
 		}, nil).
 		Once()
 
-	r, err := verifier.New(verifier.WithAnchorVerifier(m)).
+	provider, signer := trustFor(t, p)
+
+	r, err := verifier.New(
+		verifier.WithAnchorVerifier(m),
+		verifier.WithTrustProvider(provider),
+		verifier.WithTrustListSigners(signer),
+	).
 		VerifyCertificate(t.Context(), bytes.NewReader(p.Certificate), sourcesFor(p.Files))
 	require.NoError(t, err)
 
@@ -110,9 +116,13 @@ func TestAnchorProviderIsCalledOncePerDeclaredAnchor(t *testing.T) {
 		Return(&anchor.Result{Verified: true, Match: anchor.MatchExact, Payload: p.AccumulatorRoot}, nil).
 		Once()
 
+	provider, signer := trustFor(t, p)
+
 	r, err := verifier.New(
 		verifier.WithAnchorVerifier(algorand),
 		verifier.WithAnchorVerifier(polygon),
+		verifier.WithTrustProvider(provider),
+		verifier.WithTrustListSigners(signer),
 	).VerifyCertificate(t.Context(), bytes.NewReader(p.Certificate), sourcesFor(p.Files))
 	require.NoError(t, err)
 

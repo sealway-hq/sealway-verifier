@@ -8,10 +8,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha512"
+	"crypto/x509"
 	"errors"
 	"io"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +23,7 @@ import (
 	"github.com/sealway-hq/sealway-verifier/packages/verifier"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/anchor"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/report"
+	"github.com/sealway-hq/sealway-verifier/packages/verifier/trust"
 )
 
 func sourceFor(f prooftest.File) verifier.Source {
@@ -93,11 +97,55 @@ func (s stubAnchor) Verify(_ context.Context, _ anchor.Anchor, expected []byte) 
 // offline verifies without any network access, so anchor checks are skipped.
 func offline() *verifier.Verifier { return verifier.New(verifier.WithOffline()) }
 
-// anchored verifies with a stub that serves the anchored payload of p, which is
-// what a complete verification requires.
-func anchored(p *prooftest.Proof) *verifier.Verifier {
-	return verifier.New(verifier.WithAnchorVerifier(
-		stubAnchor{network: stubNetwork, payload: p.AccumulatorRoot}))
+// anchored verifies with a stub that serves the anchored payload of p and with a
+// Trusted List recognising the authority that timestamped it.
+//
+// Both are needed for a complete verification: leaving either out means a step
+// could not be established, and a run where something is unestablished is
+// reported as partial rather than complete.
+func anchored(t *testing.T, p *prooftest.Proof) *verifier.Verifier {
+	t.Helper()
+
+	provider, signer := trustFor(t, p)
+
+	return verifier.New(
+		verifier.WithAnchorVerifier(stubAnchor{network: stubNetwork, payload: p.AccumulatorRoot}),
+		verifier.WithTrustProvider(provider),
+		verifier.WithTrustListSigners(signer),
+	)
+}
+
+// trustFor builds a Trusted List snapshot recognising the throwaway authority
+// that signed the timestamp of p.
+func trustFor(t *testing.T, p *prooftest.Proof) (trust.Provider, *x509.Certificate) {
+	t.Helper()
+
+	scheme, err := prooftest.NewTrustScheme("ES")
+	require.NoError(t, err)
+
+	lotl, err := scheme.LOTL(prooftest.LOTLOptions{})
+	require.NoError(t, err)
+
+	list, err := scheme.TrustList(prooftest.TrustListOptions{
+		Services: []prooftest.TrustService{{
+			ProviderName: "Test Trust Services",
+			ServiceName:  "Qualified electronic time stamps",
+			Identity:     p.TSA.RootCert,
+			Status:       prooftest.StatusGranted,
+			StatusSince:  time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC),
+		}},
+	})
+	require.NoError(t, err)
+
+	files, err := prooftest.SnapshotFiles(lotl, map[string][]byte{"ES": list})
+	require.NoError(t, err)
+
+	mapFS := fstest.MapFS{}
+	for name, data := range files {
+		mapFS[name] = &fstest.MapFile{Data: data}
+	}
+
+	return trust.NewSnapshot(mapFS, "test snapshot"), scheme.LOTLSigner.Certificate
 }
 
 func statusOf(t *testing.T, r *report.Report, id string) report.Status {
@@ -202,7 +250,7 @@ func TestVerifyBundleComplete(t *testing.T) {
 	archive, err := p.Bundle(prooftest.BundleOptions{})
 	require.NoError(t, err)
 
-	r, err := anchored(p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
 	require.NoError(t, err)
 
 	assert.Equal(t, report.ResultCompleteValid, r.Result)
@@ -225,7 +273,7 @@ func TestVerifyCertificateWithSources(t *testing.T) {
 
 	p := newProof(t, prooftest.Options{Files: prooftest.DefaultFiles(2)})
 
-	r, err := anchored(p).VerifyCertificate(t.Context(),
+	r, err := anchored(t, p).VerifyCertificate(t.Context(),
 		bytes.NewReader(p.Certificate), sourcesFor(p.Files))
 	require.NoError(t, err)
 
@@ -315,7 +363,7 @@ func TestVerifyIgnoresUnrelatedDiscoveredSource(t *testing.T) {
 
 	sources := append(sourcesFor(p.Files), discovered)
 
-	r, err := anchored(p).VerifyCertificate(t.Context(), bytes.NewReader(p.Certificate), sources)
+	r, err := anchored(t, p).VerifyCertificate(t.Context(), bytes.NewReader(p.Certificate), sources)
 	require.NoError(t, err)
 
 	assert.Equal(t, report.ResultCompleteValid, r.Result)
@@ -335,7 +383,7 @@ func TestVerifyMatchesRenamedSourceByContent(t *testing.T) {
 		Content: p.Files[0].Content,
 	})
 
-	r, err := anchored(p).VerifyCertificate(t.Context(),
+	r, err := anchored(t, p).VerifyCertificate(t.Context(),
 		bytes.NewReader(p.Certificate), []verifier.Source{renamed})
 	require.NoError(t, err)
 
@@ -548,7 +596,7 @@ func TestBundleWithoutLooseCopiesStillVerifies(t *testing.T) {
 	archive, err := p.Bundle(prooftest.BundleOptions{OmitLooseCopies: true})
 	require.NoError(t, err)
 
-	r, err := anchored(p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
 	require.NoError(t, err)
 
 	assert.Equal(t, report.ResultCompleteValid, r.Result)
@@ -655,14 +703,14 @@ func TestVerifyDispatchesOnInput(t *testing.T) {
 	archive, err := p.Bundle(prooftest.BundleOptions{})
 	require.NoError(t, err)
 
-	r, err := anchored(p).Verify(t.Context(), verifier.Input{
+	r, err := anchored(t, p).Verify(t.Context(), verifier.Input{
 		Bundle:     bytes.NewReader(archive),
 		BundleSize: int64(len(archive)),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, report.ResultCompleteValid, r.Result)
 
-	r, err = anchored(p).Verify(t.Context(), verifier.Input{
+	r, err = anchored(t, p).Verify(t.Context(), verifier.Input{
 		Certificate: bytes.NewReader(p.Certificate),
 		Sources:     sourcesFor(p.Files),
 	})
@@ -749,11 +797,16 @@ func TestTimestampRootsEnableChainValidation(t *testing.T) {
 			bytes.NewReader(p.Certificate), sourcesFor(p.Files))
 		require.NoError(t, err)
 
+		// With neither trust anchors nor a Trusted List source, the path was not
+		// established. That is something the verifier could not determine, not a
+		// step it chose not to attempt, and it does keep the run from being
+		// complete: claiming otherwise would present an unestablished path as if
+		// it were established.
 		c, ok := r.Check("timestamp.trust_chain")
 		require.True(t, ok)
-		assert.Equal(t, report.StatusSkipped, c.Status)
-		assert.False(t, c.AffectsCompleteness,
-			"an unimplemented policy decision must not make a verification partial")
+		assert.Equal(t, report.StatusIndeterminate, c.Status)
+		assert.NotEmpty(t, c.Message)
+		assert.NotEqual(t, report.ResultCompleteValid, r.Result)
 	})
 }
 
@@ -774,7 +827,7 @@ func TestAnchorStage(t *testing.T) {
 		contains string
 	}{
 		"anchored": {
-			verifier: anchored(p),
+			verifier: anchored(t, p),
 			status:   report.StatusValid,
 			result:   report.ResultCompleteValid,
 		},
@@ -855,7 +908,7 @@ func TestAnchorBlockMismatchIsReportedAsContext(t *testing.T) {
 		}},
 	})
 
-	r, err := anchored(p).VerifyCertificate(t.Context(),
+	r, err := anchored(t, p).VerifyCertificate(t.Context(),
 		bytes.NewReader(p.Certificate), sourcesFor(p.Files))
 	require.NoError(t, err)
 
