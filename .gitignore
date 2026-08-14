@@ -1,0 +1,19 @@
+# Build output
+/dist/
+/bin/
+sealway-verifier
+sealway-verifier.exe
+
+# Test output
+coverage.out
+coverage.html
+
+# Fuzzing corpora generated locally. Only minimised reproducers under
+# testdata/fuzz are worth committing, and those are added deliberately.
+/packages/**/testdata/fuzz/*/[0-9a-f]*
+
+# Editor and operating system noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
