@@ -38,6 +38,9 @@ fuzz:
 		echo "==> $$target"; \
 		$(GO) test ./packages/verifier/ -run '^$$' -fuzz "^$$target$$" -fuzztime $(FUZZTIME) || exit 1; \
 	done
+	@echo "==> FuzzVerify (XML signatures)"
+	@$(GO) test ./packages/verifier/trustlist/xmldsig/ -run '^$$' -fuzz '^FuzzVerify$$' \
+		-fuzztime $(FUZZTIME)
 
 # Run the anchor checks against the live public networks. Excluded from the
 # ordinary test run so that no build depends on third party availability.
