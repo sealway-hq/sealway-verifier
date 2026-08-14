@@ -198,6 +198,7 @@ func TestStatusLabelsShareOneColumn(t *testing.T) {
 	}
 
 	require.Len(t, columns, 4)
+
 	for _, c := range columns {
 		assert.Equal(t, columns[0], c, "titles must start in the same column")
 	}
