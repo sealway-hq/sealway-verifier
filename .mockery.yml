@@ -1,0 +1,22 @@
+# Mock generation for the verifier test suite.
+#
+# Unlike the platform repositories, mocks are not generated in place. This
+# repository is published for audit, so the mocks are kept out of the public
+# packages: generating them under internal/ keeps testify out of the shipped
+# API surface and keeps MockVerifier from becoming part of the public contract.
+#
+# Regenerate with `make mocks`. The generated files are committed so that the
+# test suite builds without the generator installed, and CI checks that they are
+# up to date.
+all: true
+dir: 'internal/mocks/{{.SrcPackageName}}'
+filename: 'mock_{{.InterfaceName | snakecase}}.go'
+structname: 'Mock{{.InterfaceName}}'
+pkgname: 'mocks'
+template: testify
+template-data:
+  unroll-variadic: true
+packages:
+  github.com/sealway-hq/sealway-verifier/packages/verifier/anchor:
+    config:
+      recursive: false
