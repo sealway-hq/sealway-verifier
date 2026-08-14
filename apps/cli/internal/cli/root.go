@@ -101,6 +101,7 @@ func newRootCommand(streams Streams) *cobra.Command {
 	}
 
 	root.AddCommand(newVerifyCommand(streams))
+	root.AddCommand(newTrustCommand(streams))
 	root.AddCommand(newVersionCommand(streams))
 
 	return root

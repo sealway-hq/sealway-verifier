@@ -85,6 +85,9 @@ type Summary struct {
 	Valid   int `json:"valid"`
 	Invalid int `json:"invalid"`
 	Skipped int `json:"skipped"`
+	// Indeterminate is the number of checks that were attempted but could not
+	// reach a conclusion. They never count as successful.
+	Indeterminate int `json:"indeterminate"`
 	// SkippedAffectingCompleteness is the number of skipped checks that
 	// downgraded the global result from complete to partial.
 	SkippedAffectingCompleteness int `json:"skipped_affecting_completeness"`
@@ -180,6 +183,17 @@ func NewSkipped(id, title, reason string) Check {
 // result because no evidence is missing.
 func NewOutOfScope(id, title, reason string) Check {
 	return Check{ID: id, Title: title, Status: StatusSkipped, Message: reason, AffectsCompleteness: false}
+}
+
+// NewIndeterminate returns a check that was performed but could not reach a
+// conclusion, because the evidence it needs is missing, expired, incomplete or
+// impossible to authenticate.
+//
+// It is what an absence of proof must produce. Turning that absence into
+// StatusInvalid would claim the proof is broken, and turning it into StatusValid
+// would claim it holds; neither is supported by the evidence.
+func NewIndeterminate(id, title, reason string) Check {
+	return Check{ID: id, Title: title, Status: StatusIndeterminate, Message: reason, AffectsCompleteness: true}
 }
 
 // WithDetail returns a copy of the check carrying an additional detail.
@@ -289,6 +303,8 @@ func (b *Builder) Build() *Report {
 				r.Summary.Valid++
 			case StatusInvalid:
 				r.Summary.Invalid++
+			case StatusIndeterminate:
+				r.Summary.Indeterminate++
 			case StatusSkipped:
 				r.Summary.Skipped++
 
@@ -299,10 +315,13 @@ func (b *Builder) Build() *Report {
 		}
 	}
 
+	// An indeterminate step never yields a complete verification: the question
+	// was asked and the available evidence did not answer it. It is not a
+	// failure either, so it downgrades rather than invalidates.
 	switch {
 	case r.Summary.Invalid > 0:
 		r.Result = ResultInvalid
-	case r.Summary.SkippedAffectingCompleteness > 0:
+	case r.Summary.Indeterminate > 0, r.Summary.SkippedAffectingCompleteness > 0:
 		r.Result = ResultPartialValid
 	default:
 		r.Result = ResultCompleteValid
@@ -321,9 +340,9 @@ func explain(result Result) string {
 			"those hashes reconstruct the certified proof Merkle root, and that root is " +
 			"covered by the verified timestamp and anchoring evidence."
 	case ResultPartialValid:
-		return "No verification step failed, but at least one step could not be performed " +
-			"because the required evidence or capability was unavailable. " +
-			"Read the individual steps to see what has and has not been proven."
+		return "No verification step failed, but at least one step could not be performed or " +
+			"could not reach a conclusion, because the required evidence or capability was " +
+			"unavailable. Read the individual steps to see what has and has not been proven."
 	case ResultInvalid:
 		return "At least one cryptographic or structural verification step failed. " +
 			"The proof does not hold for the supplied evidence."

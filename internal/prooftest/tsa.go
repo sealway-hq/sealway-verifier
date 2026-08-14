@@ -64,7 +64,7 @@ func NewTSA() (*TSA, error) {
 
 	rootTmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "Sealway Verifier Test TSA Root"},
+		Subject:               pkix.Name{CommonName: "Sealway Verifier Test TSA Root", Country: []string{"ES"}},
 		NotBefore:             DefaultGenTime.Add(-24 * time.Hour),
 		NotAfter:              DefaultGenTime.Add(10 * 365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
@@ -89,7 +89,7 @@ func NewTSA() (*TSA, error) {
 
 	signerTmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(2),
-		Subject:               pkix.Name{CommonName: "Sealway Verifier Test TSU"},
+		Subject:               pkix.Name{CommonName: "Sealway Verifier Test TSU", Country: []string{"ES"}},
 		NotBefore:             DefaultGenTime.Add(-24 * time.Hour),
 		NotAfter:              DefaultGenTime.Add(365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature,

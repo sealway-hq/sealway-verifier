@@ -155,9 +155,15 @@ func TestCustomAnchorRegistryReplacesTheDefaults(t *testing.T) {
 
 	p := newProof(t, prooftest.Options{Files: prooftest.DefaultFiles(1)})
 
-	v := verifier.New(verifier.WithAnchorRegistry(anchor.Registry{
-		stubNetwork: stubAnchor{network: stubNetwork, payload: p.AccumulatorRoot},
-	}))
+	provider, signer := trustFor(t, p)
+
+	v := verifier.New(
+		verifier.WithAnchorRegistry(anchor.Registry{
+			stubNetwork: stubAnchor{network: stubNetwork, payload: p.AccumulatorRoot},
+		}),
+		verifier.WithTrustProvider(provider),
+		verifier.WithTrustListSigners(signer),
+	)
 
 	r, err := v.VerifyCertificate(t.Context(), bytes.NewReader(p.Certificate), sourcesFor(p.Files))
 	require.NoError(t, err)

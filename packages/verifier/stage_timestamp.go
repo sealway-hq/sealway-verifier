@@ -5,11 +5,14 @@
 package verifier
 
 import (
+	"context"
 	"crypto"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/sealway-hq/sealway-verifier/packages/verifier/eidas"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/pdf"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/proof"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/report"
@@ -24,7 +27,7 @@ const sectionTimestampTitle = "Qualified timestamp"
 // The decisive property is the last one: the message imprint must equal the
 // proof Merkle root byte for byte. A signature that verifies proves who issued
 // the token, not what the token covers.
-func (r *run) verifyTimestamp(cert *pdf.Certificate) {
+func (r *run) verifyTimestamp(ctx context.Context, cert *pdf.Certificate) {
 	reportProgress(r.opts.progress, Progress{Stage: StageTimestamp})
 
 	if len(cert.Timestamp) == 0 {
@@ -50,7 +53,7 @@ func (r *run) verifyTimestamp(cert *pdf.Certificate) {
 	r.checkSignerUsage(token)
 	r.checkTokenImprint(token)
 	r.checkTokenMetadata(token)
-	r.checkTrustChain(token)
+	r.checkTrustChain(ctx, token)
 }
 
 func (r *run) skipTimestampStage(reason string) {
@@ -70,8 +73,8 @@ func (r *run) skipTimestampChecks(reason string) {
 		report.NewSkipped("timestamp.signer_usage", "Timestamping certificate usage", reason),
 		report.NewSkipped("timestamp.imprint", "Message imprint matches the proof root", reason),
 		report.NewSkipped("timestamp.metadata", "Declared timestamp metadata", reason),
-		report.NewOutOfScope("timestamp.trust_chain", "Signer certificate chain", reason),
-		report.NewOutOfScope("timestamp.qualified", "Qualified trust-list validation", reason))
+		report.NewIndeterminate("timestamp.trust_chain", "Signer certificate path", reason),
+		report.NewIndeterminate("timestamp.qualified", "Qualified electronic timestamp", reason))
 }
 
 func (r *run) checkTokenStructure(t *timestamp.Token) {
@@ -309,51 +312,210 @@ func (r *run) checkTokenMetadata(t *timestamp.Token) {
 			}))
 }
 
-// checkTrustChain reports the certificate chain and qualification status of the
-// timestamp.
+// checkTrustChain establishes the certificate chain and the qualified status of
+// the timestamp.
 //
 // A valid CMS signature, a trusted certificate chain and qualified eIDAS status
-// are three different things. Only the first is established by this verifier
-// unless the caller supplies trust anchors, and qualification is never asserted:
-// it can only be established against the EU trusted list.
-func (r *run) checkTrustChain(t *timestamp.Token) {
-	const (
-		chainID    = "timestamp.trust_chain"
-		chainTitle = "Signer certificate chain"
+// are three different things and stay three different checks. The first says who
+// produced the token; the second that the producer chains to something the
+// caller accepts; only the third, established against an authenticated European
+// Trusted List, says the producer was a recognised qualified service at the time
+// the token asserts.
+func (r *run) checkTrustChain(ctx context.Context, t *timestamp.Token) {
+	assessment := r.assessQualification(ctx, t)
 
-		qualifiedID    = "timestamp.qualified"
-		qualifiedTitle = "Qualified trust-list validation"
-	)
+	r.checkSignerPath(t, assessment)
+	r.checkQualifiedStatus(t, assessment)
+}
 
-	switch err := r.trustChainError(t); {
-	case r.opts.timestampRoots == nil:
-		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
-			report.NewOutOfScope(chainID, chainTitle,
-				"No trust anchors were supplied, so the signer certificate chain was not validated. "+
-					"The verifier ships no trust store: deciding which roots to trust is a policy "+
-					"decision that belongs to the caller."))
-	case err != nil:
-		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
-			report.NewInvalid(chainID, chainTitle,
-				"The signer certificate does not chain to the supplied trust anchors: "+err.Error()))
-	default:
-		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
-			report.NewValid(chainID, chainTitle,
-				"The signer certificate chains to the supplied trust anchors and was valid at the "+
-					"time asserted by the token."))
+// assessQualification consults the Trusted Lists, when the caller configured a
+// source for them.
+func (r *run) assessQualification(ctx context.Context, t *timestamp.Token) *eidas.Assessment {
+	if r.opts.trustProvider == nil || t.Signer == nil {
+		return nil
 	}
 
-	message := "Validating the timestamping authority against the EU trusted list is not implemented " +
-		"in this version of the verifier, so no claim is made about qualified eIDAS status."
-	if t.HasQualifiedStatement {
-		message = "The token carries the ETSI EN 319 422 statement claiming qualified status, but that " +
-			"is a claim made by its issuer. Validating it against the EU trusted list is not " +
-			"implemented in this version of the verifier, so no claim is made about qualified " +
-			"eIDAS status."
+	evaluator, err := eidas.NewEvaluator(r.opts.trustProvider,
+		eidas.WithLimits(r.opts.limits.TrustList),
+		eidas.WithSigners(r.opts.trustListSigners))
+	if err != nil {
+		return &eidas.Assessment{Result: &eidas.Result{
+			Determination: eidas.Indeterminate,
+			Reasons:       []string{"the trust material could not be prepared: " + err.Error()},
+		}}
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, r.opts.networkTimeout)
+	defer cancel()
+
+	return evaluator.Evaluate(lookupCtx, t.Signer, t.Certificates, t.GenTime, r.opts.offline)
+}
+
+// checkSignerPath reports whether the signing certificate chains to something
+// the caller accepts.
+//
+// A Trusted List is the stronger answer, because the path it establishes ends at
+// an authority a member state publishes rather than at a root somebody chose to
+// install. Explicit trust anchors remain available for a caller who wants to
+// pin their own.
+func (r *run) checkSignerPath(t *timestamp.Token, a *eidas.Assessment) {
+	const (
+		id    = "timestamp.trust_chain"
+		title = "Signer certificate path"
+	)
+
+	if a != nil && a.Decisive != nil {
+		d := a.Decisive
+
+		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
+			report.NewValid(id, title, fmt.Sprintf(
+				"The signing certificate has a valid certification path to %q, which the %s Trusted "+
+					"List publishes as the identity of a trust service. The path was validated at %s, "+
+					"the time the token asserts.",
+				d.IdentitySubject, d.Territory, t.GenTime.Format(time.RFC3339))).
+				WithDetails(map[string]string{
+					"trust_list":      d.Territory,
+					"identity":        d.IdentitySubject,
+					"matched_by":      string(d.Kind),
+					"path_length":     strconv.Itoa(d.PathLength),
+					"trust_source":    a.TrustSource,
+					"validation_time": t.GenTime.Format(time.RFC3339),
+				}))
+
+		return
+	}
+
+	if err := r.trustChainError(t); r.opts.timestampRoots != nil {
+		if err != nil {
+			r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
+				report.NewInvalid(id, title,
+					"The signer certificate does not chain to the supplied trust anchors: "+err.Error()))
+
+			return
+		}
+
+		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
+			report.NewValid(id, title,
+				"The signer certificate chains to the supplied trust anchors and was valid at the "+
+					"time asserted by the token."))
+
+		return
+	}
+
+	reason := "No trust anchors were supplied and no Trusted List source was configured, so the " +
+		"signer certificate path was not established."
+	if a != nil && len(a.Reasons) > 0 {
+		reason = "The signer certificate path could not be established: " + a.Reasons[0]
 	}
 
 	r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
-		report.NewOutOfScope(qualifiedID, qualifiedTitle, message))
+		report.NewIndeterminate(id, title, reason))
+}
+
+// checkQualifiedStatus reports whether the timestamp is a qualified electronic
+// time stamp.
+//
+// The statement a token may carry claiming qualified status is never sufficient:
+// it is written by the issuer. Only an authenticated Trusted List can answer,
+// and only for the instant the token asserts.
+func (r *run) checkQualifiedStatus(t *timestamp.Token, a *eidas.Assessment) {
+	const (
+		id    = "timestamp.qualified"
+		title = "Qualified electronic timestamp"
+	)
+
+	if a == nil {
+		reason := "No Trusted List source was configured, so no claim is made about qualified eIDAS " +
+			"status."
+		if t.HasQualifiedStatement {
+			reason = "The token carries the ETSI EN 319 422 statement claiming qualified status, but " +
+				"that is a claim made by its issuer. No Trusted List source was configured, so the " +
+				"claim was not checked and no claim is made about qualified eIDAS status."
+		}
+
+		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
+			report.NewIndeterminate(id, title, reason))
+
+		return
+	}
+
+	details := map[string]string{
+		"determination":   string(a.Determination),
+		"validation_time": t.GenTime.Format(time.RFC3339),
+		"trust_source":    a.TrustSource,
+	}
+
+	if a.TrustListTerritory != "" {
+		details["trust_list"] = a.TrustListTerritory
+		details["trust_list_sequence"] = strconv.FormatUint(a.TrustListSequence, 10)
+	}
+
+	if d := a.Decisive; d != nil {
+		details["provider"] = d.ProviderName
+		details["service"] = d.ServiceName
+		details["service_type"] = shortID(d.ServiceType)
+		details["service_status"] = shortID(d.Status)
+		details["status_since"] = d.StatusSince.Format(time.RFC3339)
+	}
+
+	if a.Conflicting() {
+		details["conflicting_entries"] = conflictSummary(a)
+	}
+
+	switch a.Determination {
+	case eidas.Qualified:
+		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
+			report.NewValid(id, title, qualifiedMessage(a, t)).WithDetails(details))
+	case eidas.NotQualified:
+		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
+			report.NewInvalid(id, title, strings.Join(a.Reasons, " ")).WithDetails(details))
+	default:
+		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
+			report.NewIndeterminate(id, title,
+				"The qualified eIDAS status of this timestamp could not be established. "+
+					strings.Join(a.Reasons, " ")).
+				WithDetails(details))
+	}
+}
+
+func qualifiedMessage(a *eidas.Assessment, t *timestamp.Token) string {
+	d := a.Decisive
+
+	msg := fmt.Sprintf(
+		"At %s, the time this token asserts, %s operated %q as a %s service recorded as %s in the %s "+
+			"Trusted List. This timestamp is therefore a qualified electronic time stamp.",
+		t.GenTime.Format(time.RFC3339), d.ProviderName, d.ServiceName,
+		shortID(d.ServiceType), shortID(d.Status), d.Territory)
+
+	if a.Stale {
+		msg += " Note: the Trusted List consulted is past the date its operator undertook to publish " +
+			"a new one, so it may not reflect the most recent changes."
+	}
+
+	if a.Conflicting() {
+		msg += " Note: the Trusted List carries several entries covering this certificate and they " +
+			"do not agree; all of them are reported below."
+	}
+
+	return msg
+}
+
+func conflictSummary(a *eidas.Assessment) string {
+	parts := make([]string, 0, len(a.Matches))
+	for _, m := range a.Matches {
+		parts = append(parts, fmt.Sprintf("%s (%s) = %s",
+			m.IdentitySubject, m.Kind, shortID(m.Status)))
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+func shortID(id string) string {
+	if i := strings.LastIndexAny(id, "#/"); i >= 0 && i+1 < len(id) {
+		return id[i+1:]
+	}
+
+	return id
 }
 
 // trustChainError validates the signer chain when trust anchors were supplied.

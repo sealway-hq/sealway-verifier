@@ -105,6 +105,8 @@ extension, so a renamed bundle or certificate still verifies.
 | `--no-color` | Disable coloured output. `NO_COLOR` is honoured too. |
 | `--timeout` | Maximum duration of a single blockchain lookup. |
 | `--anchor-endpoint` | Override a network's public endpoint, as `network=url`. Repeatable. |
+| `--trust-source` | Where to read the European Trusted Lists: `eu` (default), a mirror base URL, or `none`. |
+| `--trust-dir` | A trust snapshot on disk, read instead of the network. |
 | `--timestamp-roots` | PEM bundle of trust anchors for the timestamp signer chain. |
 
 ### How supplied files are matched
@@ -140,7 +142,19 @@ is never reported as successful.
 | `COMPLETE_VALID` | `0` | Every applicable step was performed and none failed. |
 | `INVALID` | `1` | At least one cryptographic or structural step failed. |
 | *(operational error)* | `2` | The tool could not run the verification at all. |
-| `PARTIAL_VALID` | `3` | No step failed, but at least one could not be performed. |
+| `PARTIAL_VALID` | `3` | No step failed, but at least one could not be performed or could not conclude. |
+
+A step reports one of four outcomes. Two of them mean the question was not
+answered, and they are deliberately distinct:
+
+- `skipped` — the step was **not attempted**, because a prerequisite or a
+  capability was missing (no source files, `--offline`);
+- `indeterminate` — the step **was attempted and could not conclude**, because
+  the evidence it needs is absent, expired or impossible to authenticate (no
+  Trusted List source, a list whose signature does not verify).
+
+Neither ever reads as success, and neither is turned into a failure: an absence
+of proof is not a proof of absence.
 
 A cryptographically invalid proof is a verification outcome, not a tool failure:
 it exits `1`, while an unreadable input exits `2`.
@@ -159,24 +173,26 @@ Source files           SHA-512 recomputed from the raw bytes of every file
 Proof Merkle tree      leaves, rebuilt root, certified root consistency,
                        individual inclusion proofs
 Qualified timestamp    token structure, CMS signature, signer usage, message
-                       imprint against the proof root, declared metadata
+                       imprint against the proof root, declared metadata,
+                       signer certificate path, qualified eIDAS status
 Accumulator            inclusion proof, recomputed accumulator root
 Blockchain anchors     the anchored payload of each declared transaction
 ```
 
 ### What legitimately becomes `SKIPPED`
 
-| Step | Why |
-| --- | --- |
-| Source file checks | The original files were not provided. |
-| Rebuilt Merkle root | The tree cannot be rebuilt from files that were not provided. |
-| Blockchain anchors | `--offline`, an unreachable endpoint, or a network with no provider. |
-| Signer certificate chain | No trust anchors were supplied; see `--timestamp-roots`. |
-| Qualified trust-list validation | EU trusted-list validation is not implemented in this version. |
-| Certificate digital signature | Document signature verification is not implemented in this version. |
+| Step | Outcome | Why |
+| --- | --- | --- |
+| Source file checks | `skipped` | The original files were not provided. |
+| Rebuilt Merkle root | `skipped` | The tree cannot be rebuilt from files that were not provided. |
+| Blockchain anchors | `skipped` | `--offline`, an unreachable endpoint, or a network with no provider. |
+| Signer certificate path | `indeterminate` | Neither a Trusted List source nor `--timestamp-roots` was available. |
+| Qualified electronic timestamp | `indeterminate` | No Trusted List source, or the lists could not be authenticated. |
+| Certificate digital signature | `skipped` | Document signature verification is not implemented in this version. |
 
-The last three are documented scope limits rather than missing evidence, so they
-do not by themselves downgrade a result to partial. Every other skip does.
+Only the last is a documented scope limit that does not downgrade the result.
+Every other outcome above keeps the run from being complete, because something
+that was not established must not read as if it had been.
 
 ---
 
@@ -226,6 +242,77 @@ unreachable network must not look like a broken proof.
 
 ---
 
+## Qualified eIDAS status
+
+Whether a timestamp is a *qualified electronic time stamp* is a legal property,
+not a cryptographic one. A valid signature says who produced a token; only the
+European Trusted Lists say whether that producer was recognised as qualified, and
+only for the instant the token asserts.
+
+A token may carry an ETSI EN 319 422 statement claiming qualified status. That is
+a claim written by its issuer, and it is never treated as an answer.
+
+### How it is established
+
+```text
+the anchor published in the Official Journal
+  ↓ verifies
+the European List of Trusted Lists          ec.europa.eu/tools/lotl/eu-lotl.xml
+  ↓ pins the signing certificates of
+the national Trusted List                   e.g. tsl.digital.gob.es/TSL.xml
+  ↓ publishes
+a qualified timestamp service (TSA/QTST) and its status history
+  ↓ a certification path is built from
+the certificate that signed the token
+```
+
+Nothing is read before it has been authenticated, and the whole determination is
+made **at the time the token asserts**, never at the moment of verification. A
+service recognised then does not stop having been recognised because its
+recognition ended later, and a certificate that has since expired was still valid
+when it signed. That is what the service status history is for.
+
+### Matching is on the certification path
+
+A Trusted List normally identifies a service by the **authority that issues** its
+certificates, not by each signing certificate. Looking only for the signing
+certificate therefore answers the wrong question, and can answer it wrongly when
+a provider restructures its entries.
+
+When several entries cover the same certificate and disagree, all of them are
+reported in the check details rather than one being chosen in silence.
+
+### Bootstrap anchor
+
+Validating the lists does not remove the need for a trust anchor, it moves it.
+The one certificate this verifier asks you to take on faith is the European
+Commission's list-of-lists signer, shipped as readable PEM at
+`packages/verifier/trust/bootstrap/eu-lotl-signer.pem` with its SHA-256 recorded
+in the source and checked by a test.
+
+Compare it with the publication in the Official Journal of the European Union
+before relying on it. The set is append-only: a new certificate is added when the
+Commission rotates, and an old one is never removed, because a list issued under
+it must stay verifiable.
+
+### Working offline, and from a browser
+
+The official endpoints send no cross-origin headers, so a browser cannot read
+them directly. Take a snapshot instead:
+
+```bash
+sealway-verifier trust fetch ./trust --territory ES
+sealway-verifier verify proof.zip --trust-dir ./trust --offline
+```
+
+A snapshot holds the **official signed documents unchanged**, so whoever reads it
+verifies the European signatures themselves. A mirror is therefore a transport
+and never an authority: it can withhold or delay material, but it cannot invent a
+qualified service. Serve a snapshot over HTTPS and point a browser build at it
+with `--trust-source https://…`.
+
+---
+
 ## What a successful check proves
 
 | Check | Proves |
@@ -233,14 +320,15 @@ unreachable network must not look like a broken proof.
 | Source SHA-512 | The supplied file is byte-for-byte identical to the certified file hash. |
 | Proof Merkle root | The verified file hashes reconstruct the certified proof root. |
 | RFC 3161 timestamp | Subject to trusting the timestamping authority, the proof root existed at the asserted time. |
+| Signer certificate path | The signing certificate chains to an authority a Trusted List publishes, validated at the asserted time. |
+| Qualified electronic timestamp | The service was recorded as qualified in an authenticated national Trusted List at the asserted time. |
 | Accumulator inclusion | The proof root is included in the certified accumulator root. |
 | Blockchain anchor | The expected accumulator root is present in the referenced public transaction. |
 
 Three notions are kept strictly apart, because conflating them would overclaim:
 the CMS signature being cryptographically valid, the signer certificate chaining
-to a trusted root, and the timestamp being a *qualified* electronic time stamp
-under eIDAS. This version establishes the first, supports the second when you
-supply trust anchors, and never asserts the third.
+to a recognised authority, and the timestamp being a *qualified* electronic time
+stamp under eIDAS. Each is a separate check with its own outcome.
 
 **The verifier verifies cryptographic evidence, not legal ownership.** It makes
 no claim about authorship, ownership, copyright, legal title, or the truthfulness
@@ -345,6 +433,11 @@ packages/verifier/         public API and verification pipeline
   merkle/                  Merkle operations of the public profile
   pdf/                     certificate attachment extraction
   timestamp/               RFC 3161 parsing and signature verification
+  trustlist/               European Trusted Lists, ETSI TS 119 612
+    xmldsig/               XML signature verification of those lists
+  trust/                   trust material and how it is obtained
+    bootstrap/             the anchor published in the Official Journal
+  eidas/                   qualified status determination
   anchor/                  blockchain provider interface and implementations
   bundle/                  safe archive reading
   report/                  canonical verification report

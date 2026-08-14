@@ -20,6 +20,7 @@ import (
 	"github.com/sealway-hq/sealway-verifier/apps/cli/internal/render"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/source"
+	"github.com/sealway-hq/sealway-verifier/packages/verifier/trust"
 )
 
 type verifyFlags struct {
@@ -32,6 +33,8 @@ type verifyFlags struct {
 	timeout         time.Duration
 	anchorEndpoints []string
 	timestampRoots  string
+	trustSource     string
+	trustDir        string
 }
 
 func newVerifyCommand(streams Streams) *cobra.Command {
@@ -83,6 +86,11 @@ func newVerifyCommand(streams Streams) *cobra.Command {
 		"override the public endpoint of a network, as network=url (repeatable)")
 	flags.StringVar(&f.timestampRoots, "timestamp-roots", "",
 		"PEM bundle of trust anchors used to validate the timestamp signer chain")
+	flags.StringVar(&f.trustSource, "trust-source", "eu",
+		`where to read the European Trusted Lists from: "eu" for the official `+
+			`publication, a mirror base URL, or "none" to make no claim about qualified status`)
+	flags.StringVar(&f.trustDir, "trust-dir", "",
+		"directory holding a trust snapshot, read instead of the network")
 
 	return cmd
 }
@@ -148,7 +156,61 @@ func buildOptions(f *verifyFlags) ([]verifier.Option, error) {
 		opts = append(opts, verifier.WithTimestampRoots(pool))
 	}
 
+	trustOption, err := trustProvider(f)
+	if err != nil {
+		return nil, err
+	}
+
+	if trustOption != nil {
+		opts = append(opts, trustOption)
+	}
+
 	return opts, nil
+}
+
+// trustProvider decides where the European Trusted Lists are read from.
+//
+// A snapshot on disk wins over the network, because an operator who prepared one
+// meant it to be used, and it is the only source that works offline.
+func trustProvider(f *verifyFlags) (verifier.Option, error) {
+	if f.trustDir != "" {
+		info, err := os.Stat(f.trustDir)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read the trust snapshot %q: %w", f.trustDir, err)
+		}
+
+		if !info.IsDir() {
+			return nil, fmt.Errorf("%q is not a directory", f.trustDir)
+		}
+
+		return verifier.WithTrustProvider(
+			trust.NewSnapshot(os.DirFS(f.trustDir), f.trustDir)), nil
+	}
+
+	source := strings.TrimSpace(f.trustSource)
+
+	switch {
+	case source == "" || strings.EqualFold(source, "none"):
+		return nil, nil
+	case strings.EqualFold(source, "eu"):
+		if f.offline {
+			// Nothing to read and nothing to reach: qualified status will be
+			// reported as indeterminate, with the reason.
+			return nil, nil
+		}
+
+		return verifier.WithEUTrustLists(), nil
+	case strings.HasPrefix(source, "http://"), strings.HasPrefix(source, "https://"):
+		base := strings.TrimRight(source, "/")
+
+		return verifier.WithEUTrustLists(
+			trust.WithLOTLURL(base+"/lotl.xml"),
+			trust.WithListURLTemplate(base+"/lists/{territory}.xml"),
+		), nil
+	default:
+		return nil, fmt.Errorf(
+			`invalid --trust-source %q: expected "eu", "none" or a mirror base URL`, source)
+	}
 }
 
 func loadRoots(path string) (*x509.CertPool, error) {

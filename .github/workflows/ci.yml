@@ -126,6 +126,10 @@ jobs:
             echo "::endgroup::"
           done
 
+          echo "::group::FuzzVerify (XML signatures)"
+          go test ./packages/verifier/trustlist/xmldsig/ -run '^$' -fuzz '^FuzzVerify$' -fuzztime 30s
+          echo "::endgroup::"
+
   cross-build:
     name: Cross build
     runs-on: ubuntu-latest
