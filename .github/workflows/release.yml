@@ -68,6 +68,40 @@ jobs:
       #
       # For a tool whose whole argument is "check this without trusting us",
       # shipping it unattested would be an odd omission.
+      # Pushing an image proves it was pushed, not that it runs. This pulls it
+      # back from the registry and puts the production fixture through it, with
+      # the anchors read over HTTPS: an image missing its certificate bundle
+      # would report those as skipped rather than failing loudly, which is the
+      # quiet failure worth catching here rather than by a customer.
+      - name: Smoke test the published image
+        env:
+          IMAGE: ghcr.io/sealway-hq/sealway-verifier:${{ github.ref_name }}
+        run: |
+          image="${IMAGE#ghcr.io/sealway-hq/sealway-verifier:v}"
+          image="ghcr.io/sealway-hq/sealway-verifier:${image}"
+          docker pull "$image"
+          docker run --rm "$image" --version
+
+          docker run --rm -v "$PWD/testdata:/data:ro" "$image" \
+            verify /data/sealway-proof-SW-2026-D8DY92C8.zip --json > report.json || true
+
+          python3 - <<'CHECK'
+          import json
+          report = json.load(open("report.json"))
+          anchors = {
+              c["id"]: c["status"]
+              for s in report["sections"] for c in s["checks"]
+              if c["id"].startswith("anchors.")
+          }
+          print("anchor checks:", anchors)
+          skipped = [k for k, v in anchors.items() if v == "skipped"]
+          if skipped:
+              raise SystemExit(
+                  "the image could not read %s over HTTPS; its certificate "
+                  "bundle is probably missing" % ", ".join(skipped))
+          print("the image reads the public chains over HTTPS")
+          CHECK
+
       - name: Attest the release artifacts
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
