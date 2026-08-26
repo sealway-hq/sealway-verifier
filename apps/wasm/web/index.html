@@ -56,6 +56,8 @@
       This is a tool failure, not a verdict on the proof: nothing has been
       established either way.
     </p>
+
+    <button id="retry" type="button">Choose another file</button>
   </section>
 
   <section id="result" hidden>
@@ -71,8 +73,10 @@
     <details class="raw">
       <summary>The report as JSON</summary>
       <p class="hint">
-        This is the canonical report, byte for byte what the command line tool
-        writes with <code>--json</code>.
+        This is the canonical report: the same checks, statuses and details the
+        command line tool writes with <code>--json</code>. Only
+        <code>trust_source</code> differs, because it names where this page read
+        its trust material rather than where a command line run read its own.
       </p>
       <pre id="raw"></pre>
     </details>

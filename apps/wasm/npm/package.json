@@ -1,0 +1,49 @@
+{
+  "name": "@sealway-hq/verifier-web",
+  "version": "0.0.0",
+  "description": "Verify a Sealway proof in the browser, without trusting Sealway.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "types": "./index.d.ts",
+  "sideEffects": [
+    "./wasm_exec.js"
+  ],
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "wasm_exec.js",
+    "sealway.wasm",
+    "LICENSE",
+    "README.md"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "Ondarea Holding SAS",
+  "homepage": "https://github.com/sealway-hq/sealway-verifier#in-a-browser",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sealway-hq/sealway-verifier.git",
+    "directory": "apps/wasm/npm"
+  },
+  "bugs": {
+    "url": "https://github.com/sealway-hq/sealway-verifier/issues"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "sealway",
+    "proof",
+    "verification",
+    "eidas",
+    "rfc3161",
+    "webassembly"
+  ]
+}
