@@ -80,7 +80,7 @@ jobs:
           image="${IMAGE#ghcr.io/sealway-hq/sealway-verifier:v}"
           image="ghcr.io/sealway-hq/sealway-verifier:${image}"
           docker pull "$image"
-          docker run --rm "$image" --version
+          docker run --rm "$image" version
 
           docker run --rm -v "$PWD/testdata:/data:ro" "$image" \
             verify /data/sealway-proof-SW-2026-D8DY92C8.zip --json > report.json || true
