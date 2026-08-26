@@ -54,6 +54,14 @@ type TSA struct {
 	SignerDER  []byte
 }
 
+// CRLDistributionPoint and OCSPResponder are where a generated timestamping
+// certificate says its revocation status is published. Nothing serves them: they
+// exist so that a certificate carries the pointers a real one carries.
+const (
+	CRLDistributionPoint = "http://crl.example.test/tsa.crl"
+	OCSPResponder        = "http://ocsp.example.test"
+)
+
 // NewTSA builds a throwaway certificate authority and a timestamping
 // certificate issued by it.
 func NewTSA() (*TSA, error) {
@@ -95,6 +103,11 @@ func NewTSA() (*TSA, error) {
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
 		BasicConstraintsValid: true,
+		// A real timestamping certificate names where its revocation status is
+		// published. Generated ones do too, so that what the verifier reports
+		// about revocation is exercised against a realistic certificate.
+		CRLDistributionPoints: []string{CRLDistributionPoint},
+		OCSPServer:            []string{OCSPResponder},
 	}
 
 	signerDER, err := x509.CreateCertificate(rand.Reader, signerTmpl, rootCert, &signerKey.PublicKey, rootKey)
