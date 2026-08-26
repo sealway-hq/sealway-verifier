@@ -56,6 +56,50 @@ snapshot:
 sboms:
   - artifacts: archive
 
+# One image per architecture, joined by a manifest below, because a runner
+# builds only its own architecture natively and emulating the other is slow and
+# occasionally wrong.
+dockers:
+  - id: amd64
+    goarch: amd64
+    dockerfile: Dockerfile.release
+    use: buildx
+    image_templates:
+      - "ghcr.io/sealway-hq/sealway-verifier:{{ .Version }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+      - "--label=org.opencontainers.image.licenses=PolyForm-Shield-1.0.0"
+      - "--label=org.opencontainers.image.description=Verify a Sealway proof without trusting Sealway"
+  - id: arm64
+    goarch: arm64
+    dockerfile: Dockerfile.release
+    use: buildx
+    image_templates:
+      - "ghcr.io/sealway-hq/sealway-verifier:{{ .Version }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+      - "--label=org.opencontainers.image.licenses=PolyForm-Shield-1.0.0"
+      - "--label=org.opencontainers.image.description=Verify a Sealway proof without trusting Sealway"
+
+# Only the version tag is published. A moving "latest" would hand a test suite a
+# verifier that changes underneath it, and a verifier changing underneath a test
+# suite is exactly what you do not want the day a proof reports differently.
+docker_manifests:
+  - name_template: "ghcr.io/sealway-hq/sealway-verifier:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/sealway-hq/sealway-verifier:{{ .Version }}-amd64"
+      - "ghcr.io/sealway-hq/sealway-verifier:{{ .Version }}-arm64"
+
 changelog:
   sort: asc
   use: github
