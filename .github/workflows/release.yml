@@ -12,6 +12,12 @@ jobs:
   release:
     name: Build and publish the command line interface
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Provenance is signed with a short lived certificate issued to this run,
+      # so the run needs an OIDC identity and somewhere to record the result.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -31,6 +37,22 @@ jobs:
           # The only credential involved is the token GitHub issues to this run.
           # No Sealway infrastructure is reachable from the release pipeline.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A checksum published in the same release only proves an archive matches
+      # what that release says about it. It says nothing about who produced it.
+      # A provenance attestation binds each artifact to the workflow, the
+      # repository and the commit that built it, and is verifiable by anyone
+      # with `gh attestation verify` without trusting this pipeline's output.
+      #
+      # For a tool whose whole argument is "check this without trusting us",
+      # shipping it unattested would be an odd omission.
+      - name: Attest the release artifacts
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
 
   browser-package:
     name: Publish the browser package
