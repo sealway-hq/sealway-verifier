@@ -169,6 +169,7 @@ make build         # bin/sealway-verifier
 make wasm          # dist/web, the browser demonstration
 make wasm-test     # the browser module in the js/wasm runtime (needs node)
 make wasm-serve    # build and serve the demonstration
+make npm-package   # assemble apps/wasm/npm for publication
 ```
 
 The browser module is not covered by `make test`: its tests are built for
@@ -264,6 +265,7 @@ No dependency may require an API key, an account or any credential.
 ```text
 apps/cli/                  command line interface (thin adapter)
 apps/wasm/                 browser module (thin adapter) and demonstration page
+  npm/                     the package published to GitHub Packages
 packages/verifier/         public API and verification pipeline
   proof/                   manifest model and validation
   merkle/                  Merkle operations of the public profile

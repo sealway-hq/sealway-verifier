@@ -31,3 +31,42 @@ jobs:
           # The only credential involved is the token GitHub issues to this run.
           # No Sealway infrastructure is reachable from the release pipeline.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  browser-package:
+    name: Publish the browser package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Publishing to GitHub Packages needs nothing but the token this run is
+      # issued. A package is private by default whatever the repository's own
+      # visibility, and making one public is irreversible.
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@sealway-hq"
+
+      # The module and the Go runtime shim are produced by the same toolchain in
+      # the same step, which is what keeps them the matching pair they have to
+      # be.
+      - name: Assemble the package
+        run: make npm-package
+
+      - name: Take the version from the tag
+        working-directory: apps/wasm/npm
+        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+
+      - name: Publish
+        working-directory: apps/wasm/npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

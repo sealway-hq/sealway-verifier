@@ -1,6 +1,10 @@
 # Build output
 /dist/
 /bin/
+# Assembled into the npm package by 'make npm-package'.
+/apps/wasm/npm/sealway.wasm
+/apps/wasm/npm/wasm_exec.js
+/apps/wasm/npm/LICENSE
 sealway-verifier
 sealway-verifier.exe
 
