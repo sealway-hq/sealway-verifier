@@ -225,6 +225,76 @@ func TestConflictingEntriesAreReported(t *testing.T) {
 	assert.True(t, a.Decisive.Qualified)
 }
 
+// TestReinstatementIsNotRetroactive covers a status timeline that goes granted,
+// withdrawn, then granted again, which is what a supervisory body publishes when
+// it corrects an entry it withdrew.
+//
+// The correction applies from the instant the list says it applies, and no
+// earlier. A timestamp produced inside the withdrawal window is still read
+// against the status that was published then, because the question a Trusted
+// List answers is what was recognised at genTime, never what is recognised now.
+func TestReinstatementIsNotRetroactive(t *testing.T) {
+	t.Parallel()
+
+	s := newScheme(t)
+
+	// The three periods run forward from genTime because the throwaway
+	// timestamping certificates only become valid shortly before it, and a
+	// certification path that does not validate would mask the status question
+	// this test is about.
+	svc := s.grantedService()
+	svc.Status = prooftest.StatusGranted
+	svc.StatusSince = genTime.Add(72 * time.Hour)
+	svc.History = []prooftest.TrustServiceHistory{
+		{
+			Status:      prooftest.StatusGranted,
+			StatusSince: time.Date(2021, time.January, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			Status:      prooftest.StatusWithdrawn,
+			StatusSince: genTime.Add(24 * time.Hour),
+		},
+	}
+
+	lotl, list := s.lists(t, svc)
+
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		want eidas.Determination
+	}{
+		{"before the withdrawal", genTime, eidas.Qualified},
+		{"inside the withdrawal window", genTime.Add(48 * time.Hour), eidas.NotQualified},
+		{"after the reinstatement", genTime.Add(96 * time.Hour), eidas.Qualified},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			a := evaluatorFor(t, s, lotl, list).
+				Evaluate(t.Context(), s.tsa.SignerCert,
+					[]*x509.Certificate{s.tsa.SignerCert, s.tsa.RootCert}, tc.at, false)
+
+			assert.Equal(t, tc.want, a.Determination, "reasons: %v", a.Reasons)
+		})
+	}
+}
+
+// TestCorrectedWithdrawalRestoresTheWholePeriod is the other way a supervisory
+// body can fix a mistake: by removing the withdrawal from the record instead of
+// ending it. The entry then reads as granted throughout, including for a
+// timestamp produced while the erroneous withdrawal was published.
+func TestCorrectedWithdrawalRestoresTheWholePeriod(t *testing.T) {
+	t.Parallel()
+
+	s := newScheme(t)
+
+	lotl, list := s.lists(t, s.grantedService())
+
+	a := assess(t, s, lotl, list)
+	assert.Equal(t, eidas.Qualified, a.Determination, "reasons: %v", a.Reasons)
+	assert.False(t, a.Conflicting(), "a corrected record leaves nothing to disagree with")
+}
+
 // TestIndeterminateWithoutAnyList records that a missing list is an absence of
 // evidence, not a denial.
 func TestIndeterminateWithoutAnyList(t *testing.T) {
