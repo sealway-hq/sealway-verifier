@@ -74,6 +74,7 @@ func (r *run) skipTimestampChecks(reason string) {
 		report.NewSkipped("timestamp.imprint", "Message imprint matches the proof root", reason),
 		report.NewSkipped("timestamp.metadata", "Declared timestamp metadata", reason),
 		report.NewIndeterminate("timestamp.trust_chain", "Signer certificate path", reason),
+		revocationCheck(nil),
 		report.NewIndeterminate("timestamp.qualified", "Qualified electronic timestamp", reason))
 }
 
@@ -325,6 +326,7 @@ func (r *run) checkTrustChain(ctx context.Context, t *timestamp.Token) {
 	assessment := r.assessQualification(ctx, t)
 
 	r.checkSignerPath(t, assessment)
+	r.builder.Add(report.SectionTimestamp, sectionTimestampTitle, revocationCheck(t))
 	r.checkQualifiedStatus(t, assessment)
 }
 
@@ -525,4 +527,47 @@ func (r *run) trustChainError(t *timestamp.Token) error {
 	}
 
 	return t.VerifyChain(r.opts.timestampRoots)
+}
+
+// revocationCheck states that certificate revocation was not examined.
+//
+// It verifies nothing, and that is the point. Without it the report is silent on
+// the question, and silence is read as an answer: "a valid certification path"
+// means, in RFC 5280 and in ETSI TS 119 615, a path whose certificates were also
+// found unrevoked. This verifier reads no revocation list and queries no OCSP
+// responder, so it says so rather than letting the wording imply otherwise.
+//
+// It is recorded as outside the scope of this version rather than as evidence
+// that went missing, because no input is lacking: were it counted as missing
+// evidence, no proof could ever be reported as completely verified and the
+// distinction between complete and partial would stop meaning anything.
+//
+// The certificate names where its revocation status is published, so those
+// pointers are reported: a reader who wants the answer is told where to obtain
+// it, not merely that it is absent.
+func revocationCheck(t *timestamp.Token) report.Check {
+	const (
+		id    = "timestamp.revocation"
+		title = "Signer certificate revocation"
+	)
+
+	check := report.NewOutOfScope(id, title,
+		"Whether the signing certificate had been revoked at the time the token asserts was not "+
+			"checked: this verifier reads no certificate revocation list and queries no OCSP "+
+			"responder. Nothing is established either way, and a certificate revoked before that "+
+			"time would not have been detected here.")
+
+	if t == nil || t.Signer == nil {
+		return check
+	}
+
+	if points := t.Signer.CRLDistributionPoints; len(points) > 0 {
+		check = check.WithDetail("crl_distribution_points", strings.Join(points, " "))
+	}
+
+	if responders := t.Signer.OCSPServer; len(responders) > 0 {
+		check = check.WithDetail("ocsp_responders", strings.Join(responders, " "))
+	}
+
+	return check
 }

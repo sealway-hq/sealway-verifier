@@ -268,6 +268,103 @@ func TestVerifyBundleComplete(t *testing.T) {
 	assert.Equal(t, 3, r.Certificate.ItemCount)
 }
 
+// TestRevocationIsDeclaredRatherThanImplied pins the reason this check exists.
+//
+// The verifier reads no revocation list and queries no OCSP responder, so it
+// cannot say whether the signing certificate had been revoked. Reporting a valid
+// certification path without mentioning that would let the report answer by
+// silence, because path validation in RFC 5280 includes revocation and a reader
+// assumes it was considered.
+func TestRevocationIsDeclaredRatherThanImplied(t *testing.T) {
+	t.Parallel()
+
+	p := newProof(t, prooftest.Options{Files: prooftest.DefaultFiles(1)})
+
+	archive, err := p.Bundle(prooftest.BundleOptions{})
+	require.NoError(t, err)
+
+	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	require.NoError(t, err)
+
+	c, ok := r.Check("timestamp.revocation")
+	require.True(t, ok, "the report always states where it stands on revocation")
+
+	assert.Equal(t, report.StatusSkipped, c.Status, "it must never read as a successful check")
+	assert.NotEmpty(t, c.Message)
+
+	// The wording has to refuse the question rather than answer it, so that a
+	// revoked certificate is never mistaken for one that was checked and found
+	// good.
+	assert.Contains(t, strings.ToLower(c.Message), "not checked")
+	assert.Contains(t, strings.ToLower(c.Message), "revok")
+}
+
+// TestRevocationDeclarationDoesNotDowngradeTheResult keeps the global result
+// meaningful.
+//
+// The step is documented as outside the scope of this version rather than as
+// evidence that went missing, so it must not make a complete verification
+// unreachable for every proof forever.
+func TestRevocationDeclarationDoesNotDowngradeTheResult(t *testing.T) {
+	t.Parallel()
+
+	p := newProof(t, prooftest.Options{Files: prooftest.DefaultFiles(1)})
+
+	archive, err := p.Bundle(prooftest.BundleOptions{})
+	require.NoError(t, err)
+
+	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	require.NoError(t, err)
+
+	c, ok := r.Check("timestamp.revocation")
+	require.True(t, ok)
+
+	assert.False(t, c.AffectsCompleteness,
+		"a documented non-implementation is not missing evidence")
+	assert.Equal(t, report.ResultCompleteValid, r.Result)
+}
+
+// TestRevocationDeclarationPointsAtWhereToLook makes the admission actionable:
+// the certificate names the responders, so a reader who wants the answer is told
+// where to obtain it rather than merely told it is missing.
+func TestRevocationDeclarationPointsAtWhereToLook(t *testing.T) {
+	t.Parallel()
+
+	p := newProof(t, prooftest.Options{Files: prooftest.DefaultFiles(1)})
+
+	archive, err := p.Bundle(prooftest.BundleOptions{})
+	require.NoError(t, err)
+
+	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	require.NoError(t, err)
+
+	c, ok := r.Check("timestamp.revocation")
+	require.True(t, ok)
+
+	// The throwaway authority publishes both, so both are reported.
+	assert.Equal(t, prooftest.CRLDistributionPoint, c.Details["crl_distribution_points"])
+	assert.Equal(t, prooftest.OCSPResponder, c.Details["ocsp_responders"])
+}
+
+// TestRevocationIsDeclaredEvenWhenTheTokenIsUnreadable keeps the shape of the
+// report independent of the outcome: a consumer finds the same identifiers
+// whatever happened.
+func TestRevocationIsDeclaredEvenWhenTheTokenIsUnreadable(t *testing.T) {
+	t.Parallel()
+
+	p := newProof(t, prooftest.Options{Files: prooftest.DefaultFiles(1), Token: []byte("not a token")})
+
+	archive, err := p.Bundle(prooftest.BundleOptions{})
+	require.NoError(t, err)
+
+	r, err := offline().VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	require.NoError(t, err)
+
+	c, ok := r.Check("timestamp.revocation")
+	require.True(t, ok, "the identifier is present even when nothing could be read")
+	assert.Equal(t, report.StatusSkipped, c.Status)
+}
+
 func TestVerifyCertificateWithSources(t *testing.T) {
 	t.Parallel()
 
