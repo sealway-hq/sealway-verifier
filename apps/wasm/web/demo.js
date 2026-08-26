@@ -231,9 +231,13 @@ drop.addEventListener('drop', (event) => {
   }
 });
 
-el('again').addEventListener('click', () => {
-  el('file').value = '';
-  show('input');
-});
+// A file that could not be read must not leave the page with nowhere to go: the
+// module is still perfectly usable, so both endings offer the way back.
+for (const id of ['again', 'retry']) {
+  el(id).addEventListener('click', () => {
+    el('file').value = '';
+    show('input');
+  });
+}
 
 boot();

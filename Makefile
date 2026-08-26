@@ -4,6 +4,7 @@ MOCKERY        ?= mockery
 MOCKERY_VERSION ?= v3.7.3
 BIN            ?= bin/sealway-verifier
 WEB_OUT        ?= dist/web
+NPM_PKG        ?= apps/wasm/npm
 WEB_PORT       ?= 8080
 FUZZTIME     ?= 30s
 FUZZ_TARGETS := FuzzManifestParse FuzzHashUnmarshal FuzzMerkleProofVerify \
@@ -116,6 +117,17 @@ wasm:
 	gunzip -c testdata/trust/eu-lotl.xml.gz > $(WEB_OUT)/trust/lotl.xml
 	gunzip -c testdata/trust/es-trusted-list.xml.gz > $(WEB_OUT)/trust/lists/es.xml
 	@echo "built $(WEB_OUT) ($$(du -h $(WEB_OUT)/sealway.wasm | cut -f1) of WebAssembly)"
+
+# Assemble the npm package: the module, the Go runtime shim that is version
+# locked to it, and the licence. The wrapper and its types are committed; these
+# three are build output.
+.PHONY: npm-package
+npm-package:
+	GOOS=js GOARCH=wasm CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" \
+		-o $(NPM_PKG)/sealway.wasm ./apps/wasm
+	cp "$$($(GO) env GOROOT)/lib/wasm/wasm_exec.js" $(NPM_PKG)/wasm_exec.js
+	cp LICENSE $(NPM_PKG)/LICENSE
+	@echo "assembled $(NPM_PKG)"
 
 # Serve the demonstration. A server is needed because a module cannot be
 # instantiated from a file:// origin.
