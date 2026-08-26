@@ -155,7 +155,7 @@ jobs:
             windows/amd64
           do
             GOOS="${target%/*}" GOARCH="${target#*/}" \
-              go build -o /dev/null ./apps/cli
+              go build -o /dev/null ./apps/sealway-verifier
             echo "built $target"
           done
 

@@ -85,7 +85,7 @@ The core library must stay usable from a browser WebAssembly build. In
 - no global mutable state, no `init` side effects, no `os.Exit`, no `log.Fatal`;
 - deterministic output.
 
-Filesystem and terminal concerns belong in `apps/cli` or in
+Filesystem and terminal concerns belong in `apps/sealway-verifier` or in
 `packages/verifier/source`. `make cross` checks every release target plus
 `js/wasm`, and CI does the same.
 
@@ -253,7 +253,7 @@ Prefer the standard library. Before adding a dependency:
 - confirm it does not leak into the released binary if it is test-only:
 
 ```bash
-go list -deps ./apps/cli | grep <module>
+go list -deps ./apps/sealway-verifier | grep <module>
 ```
 
 No dependency may require an API key, an account or any credential.
@@ -263,7 +263,7 @@ No dependency may require an API key, an account or any credential.
 ## 11. Layout
 
 ```text
-apps/cli/                  command line interface (thin adapter)
+apps/sealway-verifier/     command line interface (thin adapter)
 apps/wasm/                 browser module (thin adapter) and demonstration page
   npm/                     the package published to GitHub Packages
 packages/verifier/         public API and verification pipeline

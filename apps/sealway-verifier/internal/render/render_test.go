@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sealway-hq/sealway-verifier/apps/cli/internal/render"
+	"github.com/sealway-hq/sealway-verifier/apps/sealway-verifier/internal/render"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/report"
 )
 

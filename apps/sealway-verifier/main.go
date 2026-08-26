@@ -10,7 +10,7 @@ package main
 import (
 	"os"
 
-	"github.com/sealway-hq/sealway-verifier/apps/cli/internal/cli"
+	"github.com/sealway-hq/sealway-verifier/apps/sealway-verifier/internal/cli"
 )
 
 // Build information, overridden at link time by the release pipeline.
