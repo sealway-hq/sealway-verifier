@@ -5,7 +5,10 @@
 package cli_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -87,6 +90,123 @@ func TestTrustFetchWritesAUsableSnapshot(t *testing.T) {
 	// authenticated is never written.
 	assert.Equal(t, cli.ExitError, res.code)
 	assert.Contains(t, res.stderr, "not authentic")
+}
+
+// realTrustMaterial reads the official European publications kept in testdata.
+//
+// They are the genuine signed documents, so a mirror serving them lets the
+// success path of a fetch run against material the shipped anchor actually
+// authenticates. A generated scheme cannot reach that path, which is why the
+// test above stops at the refusal.
+func realTrustMaterial(t *testing.T) (lotl, list []byte) {
+	t.Helper()
+
+	// The package sits four levels below the repository root.
+	const base = "../../../../testdata/trust"
+
+	read := func(name string) []byte {
+		compressed, err := os.ReadFile(filepath.Join(base, name))
+		require.NoError(t, err)
+
+		zr, err := gzip.NewReader(bytes.NewReader(compressed))
+		require.NoError(t, err)
+
+		data, err := io.ReadAll(zr)
+		require.NoError(t, err)
+
+		return data
+	}
+
+	return read("eu-lotl.xml.gz"), read("es-trusted-list.xml.gz")
+}
+
+// TestTrustFetchAuthenticatesAndWritesTheOfficialLists covers what an operator
+// actually does, against the real European publications served from a mirror.
+//
+// A mirror is a transport and never an authority: it carries the official signed
+// documents unchanged, and the fetch verifies the European signatures itself. A
+// mirror can therefore withhold or delay material, but it cannot invent a
+// qualified service.
+func TestTrustFetchAuthenticatesAndWritesTheOfficialLists(t *testing.T) {
+	t.Parallel()
+
+	lotl, list := realTrustMaterial(t)
+	base := mirror(t, lotl, list)
+
+	dir := filepath.Join(t.TempDir(), "trust")
+
+	res := run(t, "trust", "fetch", dir,
+		"--territory", "es",
+		"--lotl-url", base+"/lotl.xml",
+		"--list-url", base+"/lists/{territory}.xml")
+
+	require.Equal(t, cli.ExitCompleteValid, res.code, "stderr: %s", res.stderr)
+
+	// The operator is told which issue of each list the snapshot pins, so that a
+	// later disagreement can be traced to a specific publication.
+	assert.Contains(t, res.stdout, "fetched and authenticated the ES Trusted List")
+	assert.Contains(t, res.stdout, "European List of Trusted Lists: sequence")
+	assert.Contains(t, res.stdout, "ES Trusted List: sequence")
+
+	// The documents reach disk byte for byte: a snapshot that reformatted them
+	// would break the signatures it exists to carry.
+	written, err := os.ReadFile(filepath.Join(dir, "lotl.xml"))
+	require.NoError(t, err)
+	assert.Equal(t, lotl, written)
+
+	written, err = os.ReadFile(filepath.Join(dir, "lists", "es.xml"))
+	require.NoError(t, err)
+	assert.Equal(t, list, written)
+
+	var manifest map[string]any
+
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &manifest))
+
+	assert.Equal(t, trust.SnapshotFormat, manifest["format"],
+		"a mirror publishes the identifier a reader checks")
+}
+
+// TestTrustFetchLowercasesAndTrimsTerritories keeps the flag forgiving about
+// spelling while the snapshot stays canonical, because a snapshot is read back
+// by territory code.
+func TestTrustFetchNormalisesTheTerritory(t *testing.T) {
+	t.Parallel()
+
+	lotl, list := realTrustMaterial(t)
+	base := mirror(t, lotl, list)
+
+	dir := filepath.Join(t.TempDir(), "trust")
+
+	res := run(t, "trust", "fetch", dir,
+		"--territory", "  es  ",
+		"--territory", "",
+		"--lotl-url", base+"/lotl.xml",
+		"--list-url", base+"/lists/{territory}.xml")
+
+	require.Equal(t, cli.ExitCompleteValid, res.code, "stderr: %s", res.stderr)
+	assert.FileExists(t, filepath.Join(dir, "lists", "es.xml"))
+}
+
+// TestTrustFetchRefusesToWriteWhereItCannot reports a directory it cannot create
+// as an operational failure rather than losing the material silently.
+func TestTrustFetchRefusesToWriteWhereItCannot(t *testing.T) {
+	t.Parallel()
+
+	lotl, list := realTrustMaterial(t)
+	base := mirror(t, lotl, list)
+
+	// A regular file where the snapshot directory should go.
+	blocked := write(t, filepath.Join(t.TempDir(), "occupied"), []byte("not a directory"))
+
+	res := run(t, "trust", "fetch", filepath.Join(blocked, "trust"),
+		"--territory", "ES",
+		"--lotl-url", base+"/lotl.xml",
+		"--list-url", base+"/lists/{territory}.xml")
+
+	assert.Equal(t, cli.ExitError, res.code)
+	assert.NotEmpty(t, res.stderr)
 }
 
 // TestTrustFetchRefusesUnauthenticMaterial is the same guarantee stated

@@ -6,6 +6,7 @@ package eidas_test
 
 import (
 	"crypto/x509"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -293,6 +294,55 @@ func TestCorrectedWithdrawalRestoresTheWholePeriod(t *testing.T) {
 	a := assess(t, s, lotl, list)
 	assert.Equal(t, eidas.Qualified, a.Determination, "reasons: %v", a.Reasons)
 	assert.False(t, a.Conflicting(), "a corrected record leaves nothing to disagree with")
+}
+
+// TestIndeterminateWhenTheCertificateNamesNoCountry keeps the verifier from
+// guessing which member state supervises a service.
+//
+// A trust service is supervised by the state it is established in, and the
+// certificate states that as its country. Without it there is no way to know
+// which national list would cover the service, and picking one anyway would be
+// inventing the answer. The determination is therefore left undecided.
+func TestIndeterminateWhenTheCertificateNamesNoCountry(t *testing.T) {
+	t.Parallel()
+
+	ts, err := prooftest.NewTrustScheme("ES")
+	require.NoError(t, err)
+
+	tsa, err := prooftest.NewTSA(prooftest.TSAOptions{OmitCountry: true})
+	require.NoError(t, err)
+
+	s := &scheme{TrustScheme: ts, tsa: tsa}
+
+	lotl, list := s.lists(t, s.grantedService())
+
+	a := assess(t, s, lotl, list)
+
+	assert.Equal(t, eidas.Indeterminate, a.Determination)
+	assert.Contains(t, strings.Join(a.Reasons, " "), "declares no country")
+}
+
+// TestTerritoryFallsBackToTheIssuerCountry covers the shape a real hierarchy
+// often has: the signing unit carries little naming detail while the authority
+// that issued it carries the country. The supervising state is the same either
+// way, so the list is still found.
+func TestTerritoryFallsBackToTheIssuerCountry(t *testing.T) {
+	t.Parallel()
+
+	ts, err := prooftest.NewTrustScheme("ES")
+	require.NoError(t, err)
+
+	tsa, err := prooftest.NewTSA(prooftest.TSAOptions{OmitSignerCountry: true})
+	require.NoError(t, err)
+
+	s := &scheme{TrustScheme: ts, tsa: tsa}
+
+	require.Empty(t, s.tsa.SignerCert.Subject.Country, "the fallback is what is under test")
+
+	lotl, list := s.lists(t, s.grantedService())
+
+	a := assess(t, s, lotl, list)
+	assert.Equal(t, eidas.Qualified, a.Determination, "reasons: %v", a.Reasons)
 }
 
 // TestIndeterminateWithoutAnyList records that a missing list is an absence of
