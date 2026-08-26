@@ -182,9 +182,10 @@ func (r *run) checkSignature(cert *pdf.Certificate) {
 	if !cert.Signed {
 		r.builder.Add(report.SectionCertificate, sectionCertificateTitle,
 			report.NewOutOfScope(id, title,
-				"The certificate does not carry a digital signature. The proof itself does not depend "+
-					"on one: its integrity rests on the embedded manifest, the RFC 3161 timestamp and "+
-					"the blockchain anchors, all of which are verified independently."))
+				"This certificate carries no digital signature, so there is no signature to check. "+
+					"The proof does not depend on one: its integrity rests on the embedded manifest, "+
+					"the RFC 3161 timestamp and the blockchain anchors, each verified independently "+
+					"and none of which a document signature would strengthen."))
 
 		return
 	}

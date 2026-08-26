@@ -390,9 +390,11 @@ Commission cannot produce a qualified verdict — it produces `indeterminate`. A
 page that supplies nothing gets `indeterminate` too, never a claim of
 qualification.
 
-Anchors are only read when the page asks. Public endpoints may or may not allow a
-cross-origin request; when they do not, the anchor checks are reported as skipped
-rather than failed.
+Anchors are only read when the page asks, and reading them is the only step that
+leaves the browser. The three public endpoints the verifier uses do allow
+cross-origin requests, so a browser reaches `complete_valid` on a fully anchored
+proof. Where an endpoint does not, the anchor checks are reported as skipped
+rather than failed: a third party being unreachable is not a broken proof.
 
 ---
 
