@@ -34,11 +34,20 @@ import { createVerifier } from '@sealway-hq/verifier-web';
 
 const verifier = await createVerifier({ trustBaseUrl: '/trust' });
 
-const report = await verifier.verify(file);   // a File, Blob, ArrayBuffer or Uint8Array
+const report = await verifier.verify(file, { verifyAnchors: true });
 
 report.result;          // 'complete_valid' | 'partial_valid' | 'invalid'
 report.sections;        // every check, with its status and why
 ```
+
+`verify` takes a `File`, `Blob`, `ArrayBuffer` or `Uint8Array`.
+
+**Pass `verifyAnchors: true` for a complete verification.** It defaults to
+`false` so that importing this package never makes an outbound request nobody
+asked for — but the blockchain anchors are part of the proof, and leaving them
+unread reports a sound proof as partial. The three public endpoints allow
+cross-origin requests, so a browser does reach `complete_valid`; reading them is
+the only step that leaves the browser.
 
 A proof that does not hold **resolves normally**, with a result of `invalid`.
 The promise rejects only on an operational failure — an archive that cannot be
