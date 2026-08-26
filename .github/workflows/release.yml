@@ -84,7 +84,7 @@ jobs:
       # quiet failure worth catching here rather than by a customer.
       - name: Smoke test the published image
         env:
-          IMAGE: ghcr.io/sealway-hq/sealway-verifier:${{ github.ref_name }}
+          IMAGE: ghcr.io/sealway-hq/sealway-verifier:${{ github.event.release.tag_name }}
         run: |
           image="${IMAGE#ghcr.io/sealway-hq/sealway-verifier:v}"
           image="ghcr.io/sealway-hq/sealway-verifier:${image}"
