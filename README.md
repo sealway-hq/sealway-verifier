@@ -347,6 +347,24 @@ canonical report — the same report `--json` writes. Building it separately:
 make wasm         # dist/web: the module, the page and a Trusted List snapshot
 ```
 
+### As a package
+
+The browser module is published to GitHub Packages as
+`@sealway-hq/verifier-web`, on every release. It carries the module, the Go
+runtime shim that is version-locked to it, and a wrapper that turns the global
+below into an ESM import. See
+[`apps/wasm/npm/README.md`](apps/wasm/npm/README.md).
+
+```js
+import { createVerifier } from '@sealway-hq/verifier-web';
+
+const verifier = await createVerifier({ trustBaseUrl: '/trust' });
+const report = await verifier.verify(file);
+```
+
+The package is private: publication is governed by the licence, not by the
+registry being open.
+
 ### The API a page calls
 
 ```js
@@ -496,6 +514,7 @@ make test-live   # or: SEALWAY_VERIFIER_LIVE_TESTS=1 go test ./tests/e2e/
 ```text
 apps/cli/                  command line interface
 apps/wasm/                 browser module and its demonstration page
+  npm/                     the package published to GitHub Packages
 packages/verifier/         public API and verification pipeline
   proof/                   manifest model and validation
   merkle/                  Merkle operations of the public profile
