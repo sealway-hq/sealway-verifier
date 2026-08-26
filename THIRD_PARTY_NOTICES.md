@@ -14,7 +14,7 @@ Shield License 1.0.0. Every one of them is permissive; none is copyleft.
 | --- | --- | --- | --- |
 | `github.com/pdfcpu/pdfcpu` | v0.15.0 | Apache-2.0 | Reading the certificate document and extracting its embedded attachments |
 | `github.com/digitorus/pkcs7` | v0.0.0-20250730155240 | MIT | CMS SignedData parsing and signature verification for the RFC 3161 token |
-| `github.com/hyperscale-stack/merkle` | v1.0.0 | MIT (see note below) | The Merkle tree construction of the public Sealway proof profile |
+| `github.com/hyperscale-stack/merkle` | v1.0.1 | MIT | The Merkle tree construction of the public Sealway proof profile |
 | `github.com/beevik/etree` | v1.7.0 | BSD-2-Clause | XML tree used to canonicalise and verify the signatures of the European Trusted Lists |
 | `github.com/spf13/cobra` | v1.10.2 | Apache-2.0 | Command line interface |
 | `github.com/spf13/pflag` | v1.0.10 | BSD-3-Clause | Flag parsing, required by cobra |
@@ -26,9 +26,9 @@ Shield License 1.0.0. Every one of them is permissive; none is copyleft.
 | `github.com/mattn/go-runewidth` | v0.0.27 | MIT | Required by pdfcpu |
 | `github.com/clipperhouse/uax29/v2` | v2.7.0 | MIT | Required by pdfcpu |
 | `go.yaml.in/yaml/v3` | v3.0.5 | MIT | Required by pdfcpu |
-| `go.opentelemetry.io/otel` | v1.42.0 | Apache-2.0 | Required by hyperscale-stack/merkle |
-| `go.opentelemetry.io/otel/metric` | v1.42.0 | Apache-2.0 | Required by OpenTelemetry |
-| `go.opentelemetry.io/otel/trace` | v1.42.0 | Apache-2.0 | Required by OpenTelemetry |
+| `go.opentelemetry.io/otel` | v1.45.0 | Apache-2.0 | Required by hyperscale-stack/merkle |
+| `go.opentelemetry.io/otel/metric` | v1.45.0 | Apache-2.0 | Required by OpenTelemetry |
+| `go.opentelemetry.io/otel/trace` | v1.45.0 | Apache-2.0 | Required by OpenTelemetry |
 | `go.opentelemetry.io/auto/sdk` | v1.2.1 | Apache-2.0 | Required by OpenTelemetry |
 | `github.com/go-logr/logr` | v1.4.3 | Apache-2.0 | Required by OpenTelemetry |
 | `github.com/go-logr/stdr` | v1.2.2 | Apache-2.0 | Required by OpenTelemetry |
@@ -53,19 +53,6 @@ confirms testify is not linked into the released binary.
 
 The generator itself, `github.com/vektra/mockery/v3` (BSD-3-Clause), is invoked
 through `go run` and is not a module dependency.
-
-## Note on `github.com/hyperscale-stack/merkle`
-
-Every source file of that module carries the header
-
-> Use of this source code is governed by a MIT license that can be found in the
-> LICENSE file.
-
-but the published `v1.0.0` module does not actually contain a `LICENSE` file. The
-intent is unambiguous and the module is published by the same authors as this
-repository, so this is a packaging omission rather than a licensing question. It
-should be corrected upstream before this repository is made public, so that the
-dependency carries its licence text the way redistribution expects.
 
 ## Note on XML signature verification
 
