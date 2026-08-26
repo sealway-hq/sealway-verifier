@@ -62,9 +62,34 @@ const (
 	OCSPResponder        = "http://ocsp.example.test"
 )
 
+// TSAOptions configures a generated timestamping authority.
+type TSAOptions struct {
+	// OmitSignerCountry leaves the country out of the signing certificate only,
+	// so that the scheme territory has to be taken from the issuer.
+	OmitSignerCountry bool
+	// OmitCountry leaves the country out of both certificates, so that no scheme
+	// territory can be determined at all.
+	OmitCountry bool
+}
+
 // NewTSA builds a throwaway certificate authority and a timestamping
 // certificate issued by it.
-func NewTSA() (*TSA, error) {
+func NewTSA(opts ...TSAOptions) (*TSA, error) {
+	var o TSAOptions
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+
+	country := []string{"ES"}
+	if o.OmitCountry {
+		country = nil
+	}
+
+	signerCountry := country
+	if o.OmitSignerCountry {
+		signerCountry = nil
+	}
+
 	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -72,7 +97,7 @@ func NewTSA() (*TSA, error) {
 
 	rootTmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "Sealway Verifier Test TSA Root", Country: []string{"ES"}},
+		Subject:               pkix.Name{CommonName: "Sealway Verifier Test TSA Root", Country: country},
 		NotBefore:             DefaultGenTime.Add(-24 * time.Hour),
 		NotAfter:              DefaultGenTime.Add(10 * 365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
@@ -97,7 +122,7 @@ func NewTSA() (*TSA, error) {
 
 	signerTmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(2),
-		Subject:               pkix.Name{CommonName: "Sealway Verifier Test TSU", Country: []string{"ES"}},
+		Subject:               pkix.Name{CommonName: "Sealway Verifier Test TSU", Country: signerCountry},
 		NotBefore:             DefaultGenTime.Add(-24 * time.Hour),
 		NotAfter:              DefaultGenTime.Add(365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature,

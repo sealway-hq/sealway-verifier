@@ -126,8 +126,10 @@ anchor carrying the wrong payload.
 - Use `t.Parallel()` unless the test needs `t.Setenv`.
 - Add a fuzz seed when you fix a parser bug.
 
-**Coverage** is currently ~92%. Treat a drop as a regression, but never add a
-test purely to move the number: cover behaviour, not statements.
+**Coverage** is currently ~90%. Treat a drop as a regression, but never add a
+test purely to move the number: cover behaviour, not statements. The remaining
+gaps are deliberate: the process entry point, and the branches that only differ
+in the wording of a message.
 
 ---
 
@@ -306,9 +308,12 @@ remove, or lists issued under an older anchor stop verifying.
 
 ## 12. Out of scope for now
 
-Do not implement here: the desktop application, the website integration, the
-WASM JavaScript wrapper, proof creation, timestamp creation, blockchain
-anchoring, or any Sealway backend integration.
+Do not implement here: the desktop application, the website integration, proof
+creation, timestamp creation, blockchain anchoring, or any Sealway backend
+integration.
+
+The browser module in `apps/wasm` is in scope and built: it is the thin adapter a
+page calls, not an integration with any particular site.
 
 The library must nevertheless keep exposing the primitives those will need:
 `ComputeMerkleRoot`, `GenerateMerkleProof`, `VerifyMerkleProof`, `HashSource`.
