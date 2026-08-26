@@ -45,5 +45,8 @@
     "eidas",
     "rfc3161",
     "webassembly"
-  ]
+  ],
+  "scripts": {
+    "prepack": "node -e \"['sealway.wasm','wasm_exec.js','LICENSE'].forEach(f=>{try{require('fs').accessSync(f)}catch{console.error('missing '+f+': run make npm-package from the repository root');process.exit(1)}})\""
+  }
 }
