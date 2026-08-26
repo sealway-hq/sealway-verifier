@@ -61,6 +61,37 @@ type Options struct {
 	OmitManifest bool
 	// OmitToken leaves the timestamp artifact out of the certificate.
 	OmitToken bool
+	// Revocation embeds long term validation evidence in the certificate: the
+	// certification path and a signed statement of the signing certificate's
+	// revocation status. Nil embeds none, which is what a proof made before the
+	// platform began capturing it looks like.
+	Revocation *RevocationOptions
+}
+
+// RevocationOptions configures the embedded revocation evidence.
+type RevocationOptions struct {
+	// Status is the OCSP status to attest: ocsp.Good, ocsp.Revoked or
+	// ocsp.Unknown.
+	Status int
+	// RevokedAt is when the revocation took effect, for a revoked certificate.
+	// Zero means one hour before the asserted time.
+	RevokedAt time.Time
+	// Reason is the RFC 5280 revocation reason code.
+	Reason int
+	// ThisUpdate is when the answer is current as of. Zero means one hour after
+	// the asserted time, which is what a capture made after a grace period looks
+	// like.
+	ThisUpdate time.Time
+	// DelegatedResponder answers with a certificate the authority issued rather
+	// than with the authority's own key.
+	DelegatedResponder bool
+	// OmitOCSPSigningUsage leaves the OCSP signing extended key usage off a
+	// delegated responder, which RFC 6960 requires it to carry.
+	OmitOCSPSigningUsage bool
+	// OmitChain leaves the certification path out while keeping the response.
+	OmitChain bool
+	// Corrupt flips a byte of the response after signing.
+	Corrupt bool
 }
 
 // Anchor is a blockchain anchor declared by a generated manifest.
@@ -151,6 +182,15 @@ func New(opts Options) (*Proof, error) {
 			Description: "RFC 3161 timestamp token over the proof root",
 			Content:     token,
 		})
+	}
+
+	if opts.Revocation != nil {
+		evidence, rErr := tsa.revocationEvidence(*opts.Revocation)
+		if rErr != nil {
+			return nil, rErr
+		}
+
+		attachments = append(attachments, evidence...)
 	}
 
 	cert, err := BuildCertificate(opts.PublicID, attachments)

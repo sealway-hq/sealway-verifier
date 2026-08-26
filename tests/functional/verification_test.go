@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ocsp"
 
 	"github.com/sealway-hq/sealway-verifier/internal/prooftest"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier"
@@ -53,6 +54,12 @@ func newProof(t *testing.T, opts prooftest.Options) *prooftest.Proof {
 
 	if opts.Files == nil {
 		opts.Files = prooftest.DefaultFiles(3)
+	}
+
+	// A complete proof carries its revocation evidence; a test wanting the
+	// opposite builds it without.
+	if opts.Revocation == nil {
+		opts.Revocation = &prooftest.RevocationOptions{Status: ocsp.Good}
 	}
 
 	p, err := prooftest.New(opts)

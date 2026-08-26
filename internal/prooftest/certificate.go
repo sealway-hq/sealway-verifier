@@ -18,8 +18,10 @@ import (
 
 // Names of the embedded artifacts a Sealway certificate carries.
 const (
-	ManifestAttachmentName  = "sealway-proof.json"
-	TimestampAttachmentName = "proof-timestamp.tsr"
+	ManifestAttachmentName   = "sealway-proof.json"
+	TimestampAttachmentName  = "proof-timestamp.tsr"
+	ChainAttachmentName      = "proof-chain.der"
+	RevocationAttachmentName = "proof-revocation.ors"
 )
 
 // Attachment is one embedded file of a generated certificate.

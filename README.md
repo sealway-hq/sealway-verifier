@@ -189,28 +189,44 @@ Blockchain anchors     the anchored payload of each declared transaction
 | Signer certificate path | `indeterminate` | Neither a Trusted List source nor `--timestamp-roots` was available. |
 | Qualified electronic timestamp | `indeterminate` | No Trusted List source, or the lists could not be authenticated. |
 | Certificate digital signature | `skipped` | Document signature verification is not implemented in this version. |
-| Signer certificate revocation | `skipped` | Revocation checking is not implemented in this version. |
+| Signer certificate revocation | `skipped` | The proof carries no revocation evidence, and a past status cannot be reconstructed. |
 
-The last two are documented scope limits that do not downgrade the result. Every
-other outcome above keeps the run from being complete, because something that was
-not established must not read as if it had been.
+Only the certificate signature is a documented scope limit that does not
+downgrade the result. Every other outcome above keeps the run from being
+complete, because something that was not established must not read as if it had
+been.
 
-### Revocation is declared, not checked
+### Revocation is read from the proof, not fetched
 
-The verifier reads no certificate revocation list and queries no OCSP responder,
-so it cannot say whether the certificate that signed the timestamp had been
-revoked at the time the token asserts.
+Whether the certificate that signed the timestamp had been revoked **at the time
+the token asserts** is answered from evidence the proof carries: a signed
+statement of that status, embedded in the certificate alongside the manifest and
+the token.
 
-It reports that rather than passing over it, because "a valid certification path"
-means, in RFC 5280 and in ETSI TS 119 615, a path whose certificates were also
-found unrevoked, and a reader is entitled to assume the words carry their usual
-meaning. The step therefore appears in every report as `skipped`, together with
-the revocation list and OCSP addresses the certificate itself publishes, so that
+It is not fetched. A responder answers about now rather than about a moment in
+the past; an old certificate eventually falls out of the lists that once covered
+it; and the endpoints a certificate names are often unreachable from where
+verification happens — a browser cannot make the request at all. Evidence
+captured when the proof was made is what keeps the question answerable later.
+
+The evidence is material, never authority. Every response is verified against the
+issuing authority before anything it says is read, and a delegated responder must
+carry the OCSP signing extended key usage RFC 6960 requires, so a certificate the
+authority merely signed cannot answer for it. Evidence current *before* the
+asserted time is refused: it cannot answer the question, and accepting it would
+let an older, more convenient answer be substituted for the one that covers it.
+
+**When a revocation happened decides what it means.** A certificate revoked after
+a timestamp was made was still recognised when it signed, so the timestamp
+stands — otherwise every proof an authority ever made would break the day it
+rotated a key. The exception is a revocation for compromise: the compromise has
+no start date in the evidence and may well predate it, so that case is reported
+as indeterminate rather than as failure.
+
+A proof carrying no evidence reports `skipped`, and the run is partial. That is
+not a limitation of this verifier but a gap in the proof, and the check still
+names the revocation list and OCSP addresses the certificate publishes, so
 whoever wants the answer is told where to obtain it.
-
-What this leaves unproven is specific and worth stating plainly: had the signing
-key been compromised and its certificate revoked before that time, this verifier
-would not have noticed. Everything else the timestamp establishes still holds.
 
 ---
 
@@ -405,7 +421,8 @@ rather than failed: a third party being unreachable is not a broken proof.
 | Source SHA-512 | The supplied file is byte-for-byte identical to the certified file hash. |
 | Proof Merkle root | The verified file hashes reconstruct the certified proof root. |
 | RFC 3161 timestamp | Subject to trusting the timestamping authority, the proof root existed at the asserted time. |
-| Signer certificate path | The signing certificate chains to an authority a Trusted List publishes, validated at the asserted time. Revocation was not examined. |
+| Signer certificate path | The signing certificate chains to an authority a Trusted List publishes, validated at the asserted time. |
+| Signer certificate revocation | The certificate was not revoked at the asserted time, according to a statement signed by its issuing authority. |
 | Qualified electronic timestamp | The service was recorded as qualified in an authenticated national Trusted List at the asserted time. |
 | Accumulator inclusion | The proof root is included in the certified accumulator root. |
 | Blockchain anchor | The expected accumulator root is present in the referenced public transaction. |
@@ -527,6 +544,7 @@ packages/verifier/         public API and verification pipeline
   trust/                   trust material and how it is obtained
     bootstrap/             the anchor published in the Official Journal
   eidas/                   qualified status determination
+  revocation/              certificate revocation, from evidence a proof carries
   anchor/                  blockchain provider interface and implementations
   bundle/                  safe archive reading
   report/                  canonical verification report

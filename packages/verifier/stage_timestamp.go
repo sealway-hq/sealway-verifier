@@ -7,6 +7,7 @@ package verifier
 import (
 	"context"
 	"crypto"
+	"crypto/x509"
 	"fmt"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/pdf"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/proof"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/report"
+	"github.com/sealway-hq/sealway-verifier/packages/verifier/revocation"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/timestamp"
 )
 
@@ -53,7 +55,7 @@ func (r *run) verifyTimestamp(ctx context.Context, cert *pdf.Certificate) {
 	r.checkSignerUsage(token)
 	r.checkTokenImprint(token)
 	r.checkTokenMetadata(token)
-	r.checkTrustChain(ctx, token)
+	r.checkTrustChain(ctx, token, cert)
 }
 
 func (r *run) skipTimestampStage(reason string) {
@@ -74,7 +76,7 @@ func (r *run) skipTimestampChecks(reason string) {
 		report.NewSkipped("timestamp.imprint", "Message imprint matches the proof root", reason),
 		report.NewSkipped("timestamp.metadata", "Declared timestamp metadata", reason),
 		report.NewIndeterminate("timestamp.trust_chain", "Signer certificate path", reason),
-		revocationCheck(nil),
+		report.NewSkipped("timestamp.revocation", "Signer certificate revocation", reason),
 		report.NewIndeterminate("timestamp.qualified", "Qualified electronic timestamp", reason))
 }
 
@@ -322,11 +324,11 @@ func (r *run) checkTokenMetadata(t *timestamp.Token) {
 // caller accepts; only the third, established against an authenticated European
 // Trusted List, says the producer was a recognised qualified service at the time
 // the token asserts.
-func (r *run) checkTrustChain(ctx context.Context, t *timestamp.Token) {
+func (r *run) checkTrustChain(ctx context.Context, t *timestamp.Token, cert *pdf.Certificate) {
 	assessment := r.assessQualification(ctx, t)
 
 	r.checkSignerPath(t, assessment)
-	r.builder.Add(report.SectionTimestamp, sectionTimestampTitle, revocationCheck(t))
+	r.checkRevocation(t, cert)
 	r.checkQualifiedStatus(t, assessment)
 }
 
@@ -529,45 +531,176 @@ func (r *run) trustChainError(t *timestamp.Token) error {
 	return t.VerifyChain(r.opts.timestampRoots)
 }
 
-// revocationCheck states that certificate revocation was not examined.
+// checkRevocation reports whether the signing certificate had been revoked at
+// the time the token asserts.
 //
-// It verifies nothing, and that is the point. Without it the report is silent on
-// the question, and silence is read as an answer: "a valid certification path"
-// means, in RFC 5280 and in ETSI TS 119 615, a path whose certificates were also
-// found unrevoked. This verifier reads no revocation list and queries no OCSP
-// responder, so it says so rather than letting the wording imply otherwise.
-//
-// It is recorded as outside the scope of this version rather than as evidence
-// that went missing, because no input is lacking: were it counted as missing
-// evidence, no proof could ever be reported as completely verified and the
-// distinction between complete and partial would stop meaning anything.
-//
-// The certificate names where its revocation status is published, so those
-// pointers are reported: a reader who wants the answer is told where to obtain
-// it, not merely that it is absent.
-func revocationCheck(t *timestamp.Token) report.Check {
+// The evidence is read from the certificate, never fetched. A responder answers
+// about now rather than about a moment in the past, and the endpoints a
+// certificate names are frequently unreachable from where verification happens:
+// a browser cannot make the request at all. Evidence captured when the proof was
+// made is what keeps the question answerable at all, so a proof that carries
+// none leaves it unanswered rather than answered favourably.
+func (r *run) checkRevocation(t *timestamp.Token, cert *pdf.Certificate) {
 	const (
 		id    = "timestamp.revocation"
 		title = "Signer certificate revocation"
 	)
 
-	check := report.NewOutOfScope(id, title,
-		"Whether the signing certificate had been revoked at the time the token asserts was not "+
-			"checked: this verifier reads no certificate revocation list and queries no OCSP "+
-			"responder. Nothing is established either way, and a certificate revoked before that "+
-			"time would not have been detected here.")
+	add := func(c report.Check) {
+		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle, c.WithDetails(pointers(t)))
+	}
 
 	if t == nil || t.Signer == nil {
-		return check
+		add(report.NewSkipped(id, title,
+			"The token carries no identifiable signer certificate, so there is nothing to ask "+
+				"about."))
+
+		return
+	}
+
+	if len(cert.Revocation) == 0 {
+		add(report.NewSkipped(id, title,
+			"This proof carries no revocation evidence, and the status of a certificate at a past "+
+				"instant cannot be reconstructed afterwards. Whether the signing certificate had "+
+				"been revoked when it signed is therefore not established, in either direction."))
+
+		return
+	}
+
+	issuer := issuerOf(t.Signer, parseChain(cert.Chain), t.Certificates)
+	if issuer == nil {
+		add(report.NewIndeterminate(id, title,
+			"The certificate that issued the signing certificate is not available, so the "+
+				"revocation evidence this proof carries cannot be authenticated. It is therefore "+
+				"not read, and nothing is claimed about revocation."))
+
+		return
+	}
+
+	result, err := revocation.Check(cert.Revocation, t.Signer, issuer, t.GenTime)
+	if err != nil {
+		add(report.NewIndeterminate(id, title,
+			"The revocation evidence this proof carries could not be used: "+err.Error()+
+				". Nothing is claimed about revocation, in either direction."))
+
+		return
+	}
+
+	add(revocationOutcome(id, title, t, result))
+}
+
+// revocationOutcome turns what the evidence established into a reported check.
+func revocationOutcome(id, title string, t *timestamp.Token, res *revocation.Result) report.Check {
+	details := map[string]string{
+		"responder":     res.Responder,
+		"status":        string(res.Status),
+		"this_update":   res.ThisUpdate.Format(time.RFC3339),
+		"asserted_time": t.GenTime.Format(time.RFC3339),
+		"freshness":     res.Freshness.String(),
+	}
+
+	if res.Delegated {
+		details["responder_delegated"] = "true"
+	}
+
+	if !res.RevokedAt.IsZero() {
+		details["revoked_at"] = res.RevokedAt.Format(time.RFC3339)
+		details["revocation_reason"] = res.ReasonName
+	}
+
+	switch res.Status {
+	case revocation.StatusGood:
+		return report.NewValid(id, title, fmt.Sprintf(
+			"%q states that the signing certificate was not revoked, in an answer current as of "+
+				"%s, which is %s after the time the token asserts.",
+			res.Responder, res.ThisUpdate.Format(time.RFC3339), res.Freshness)).
+			WithDetails(details)
+
+	case revocation.StatusRevokedLater:
+		return report.NewValid(id, title, fmt.Sprintf(
+			"The signing certificate was revoked on %s, after the %s this token asserts, for %s. "+
+				"A revocation for that reason takes effect when it is recorded and does not reach "+
+				"back: the certificate was still recognised when it signed.",
+			res.RevokedAt.Format(time.RFC3339), t.GenTime.Format(time.RFC3339), res.ReasonName)).
+			WithDetails(details)
+
+	case revocation.StatusRevoked:
+		return report.NewInvalid(id, title, fmt.Sprintf(
+			"The signing certificate had been revoked on %s, before the %s this token asserts, "+
+				"for %s. It was not usable when it signed.",
+			res.RevokedAt.Format(time.RFC3339), t.GenTime.Format(time.RFC3339), res.ReasonName)).
+			WithDetails(details)
+
+	default:
+		message := "The responder did not recognise the signing certificate, so its revocation " +
+			"status is not established."
+
+		if !res.RevokedAt.IsZero() {
+			message = fmt.Sprintf(
+				"The signing certificate was revoked on %s, after the %s this token asserts, for "+
+					"%s. A compromise has no start date in the evidence and may well predate the "+
+					"revocation, so whether the key was still exclusively the authority's when it "+
+					"signed is not established, in either direction.",
+				res.RevokedAt.Format(time.RFC3339), t.GenTime.Format(time.RFC3339), res.ReasonName)
+		}
+
+		return report.NewIndeterminate(id, title, message).WithDetails(details)
+	}
+}
+
+// pointers records where a reader could obtain revocation evidence themselves,
+// whatever this verifier managed to establish.
+func pointers(t *timestamp.Token) map[string]string {
+	out := map[string]string{}
+
+	if t == nil || t.Signer == nil {
+		return out
 	}
 
 	if points := t.Signer.CRLDistributionPoints; len(points) > 0 {
-		check = check.WithDetail("crl_distribution_points", strings.Join(points, " "))
+		out["crl_distribution_points"] = strings.Join(points, " ")
 	}
 
 	if responders := t.Signer.OCSPServer; len(responders) > 0 {
-		check = check.WithDetail("ocsp_responders", strings.Join(responders, " "))
+		out["ocsp_responders"] = strings.Join(responders, " ")
 	}
 
-	return check
+	return out
+}
+
+// parseChain reads the certification path a proof carries. Unreadable bytes
+// yield no certificates rather than an error: the path is material, and what it
+// fails to establish is reported by the checks that needed it.
+func parseChain(der []byte) []*x509.Certificate {
+	if len(der) == 0 {
+		return nil
+	}
+
+	certs, err := x509.ParseCertificates(der)
+	if err != nil {
+		return nil
+	}
+
+	return certs
+}
+
+// issuerOf finds the certificate that issued signer, among those supplied.
+//
+// A matching subject is not enough: the candidate must actually verify the
+// signature on the signer, or a certificate carrying the right name would be
+// taken for the authority.
+func issuerOf(signer *x509.Certificate, pools ...[]*x509.Certificate) *x509.Certificate {
+	for _, pool := range pools {
+		for _, candidate := range pool {
+			if candidate.Equal(signer) {
+				continue
+			}
+
+			if signer.CheckSignatureFrom(candidate) == nil {
+				return candidate
+			}
+		}
+	}
+
+	return nil
 }

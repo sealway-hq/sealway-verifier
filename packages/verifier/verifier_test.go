@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ocsp"
 
 	"github.com/sealway-hq/sealway-verifier/internal/prooftest"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier"
@@ -60,6 +61,12 @@ func newProof(t *testing.T, opts prooftest.Options) *prooftest.Proof {
 			TransactionID: "3DZT62LVBKVIYULEPC3QGNEWVMKZEBHXA2PX7BBYU4TL7ZZI2EQQ",
 			BlockNumber:   64055209,
 		}}
+	}
+
+	// A proof that carries its revocation evidence is what a complete one looks
+	// like. A test that wants the opposite builds it without.
+	if opts.Revocation == nil {
+		opts.Revocation = &prooftest.RevocationOptions{Status: ocsp.Good}
 	}
 
 	p, err := prooftest.New(opts)
@@ -268,44 +275,11 @@ func TestVerifyBundleComplete(t *testing.T) {
 	assert.Equal(t, 3, r.Certificate.ItemCount)
 }
 
-// TestRevocationIsDeclaredRatherThanImplied pins the reason this check exists.
-//
-// The verifier reads no revocation list and queries no OCSP responder, so it
-// cannot say whether the signing certificate had been revoked. Reporting a valid
-// certification path without mentioning that would let the report answer by
-// silence, because path validation in RFC 5280 includes revocation and a reader
-// assumes it was considered.
-func TestRevocationIsDeclaredRatherThanImplied(t *testing.T) {
-	t.Parallel()
-
-	p := newProof(t, prooftest.Options{Files: prooftest.DefaultFiles(1)})
-
-	archive, err := p.Bundle(prooftest.BundleOptions{})
-	require.NoError(t, err)
-
-	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
-	require.NoError(t, err)
-
-	c, ok := r.Check("timestamp.revocation")
-	require.True(t, ok, "the report always states where it stands on revocation")
-
-	assert.Equal(t, report.StatusSkipped, c.Status, "it must never read as a successful check")
-	assert.NotEmpty(t, c.Message)
-
-	// The wording has to refuse the question rather than answer it, so that a
-	// revoked certificate is never mistaken for one that was checked and found
-	// good.
-	assert.Contains(t, strings.ToLower(c.Message), "not checked")
-	assert.Contains(t, strings.ToLower(c.Message), "revok")
-}
-
-// TestRevocationDeclarationDoesNotDowngradeTheResult keeps the global result
-// meaningful.
-//
-// The step is documented as outside the scope of this version rather than as
-// evidence that went missing, so it must not make a complete verification
-// unreachable for every proof forever.
-func TestRevocationDeclarationDoesNotDowngradeTheResult(t *testing.T) {
+// TestRevocationIsEstablishedFromEmbeddedEvidence is the case the check exists
+// for: a proof carrying a signed statement of its signing certificate's status
+// answers the question with no network at all, which is what makes it answerable
+// from a browser.
+func TestRevocationIsEstablishedFromEmbeddedEvidence(t *testing.T) {
 	t.Parallel()
 
 	p := newProof(t, prooftest.Options{Files: prooftest.DefaultFiles(1)})
@@ -319,18 +293,78 @@ func TestRevocationDeclarationDoesNotDowngradeTheResult(t *testing.T) {
 	c, ok := r.Check("timestamp.revocation")
 	require.True(t, ok)
 
-	assert.False(t, c.AffectsCompleteness,
-		"a documented non-implementation is not missing evidence")
+	assert.Equal(t, report.StatusValid, c.Status)
+	assert.Equal(t, "good", c.Details["status"])
+	assert.Equal(t, report.ResultCompleteValid, r.Result,
+		"a proof carrying its evidence leaves nothing unestablished")
+}
+
+// TestRevocationBeforeTheAssertedTimeInvalidatesTheProof is the finding the
+// check is worth having for: the certificate was already withdrawn when it
+// signed, so what it signed proves nothing.
+func TestRevocationBeforeTheAssertedTimeInvalidatesTheProof(t *testing.T) {
+	t.Parallel()
+
+	p := newProof(t, prooftest.Options{
+		Files: prooftest.DefaultFiles(1),
+		Revocation: &prooftest.RevocationOptions{
+			Status: ocsp.Revoked,
+			Reason: ocsp.KeyCompromise,
+		},
+	})
+
+	archive, err := p.Bundle(prooftest.BundleOptions{})
+	require.NoError(t, err)
+
+	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	require.NoError(t, err)
+
+	assert.Equal(t, report.StatusInvalid, statusOf(t, r, "timestamp.revocation"))
+	assert.Equal(t, report.ResultInvalid, r.Result)
+}
+
+// TestRevocationAfterTheAssertedTimeDoesNotBreakTheProof keeps a rotated
+// certificate from retroactively destroying every proof an authority ever made.
+func TestRevocationAfterTheAssertedTimeDoesNotBreakTheProof(t *testing.T) {
+	t.Parallel()
+
+	p := newProof(t, prooftest.Options{
+		Files: prooftest.DefaultFiles(1),
+		Revocation: &prooftest.RevocationOptions{
+			Status:    ocsp.Revoked,
+			Reason:    ocsp.Superseded,
+			RevokedAt: prooftest.DefaultGenTime.Add(72 * time.Hour),
+		},
+	})
+
+	archive, err := p.Bundle(prooftest.BundleOptions{})
+	require.NoError(t, err)
+
+	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	require.NoError(t, err)
+
+	c, ok := r.Check("timestamp.revocation")
+	require.True(t, ok)
+
+	assert.Equal(t, report.StatusValid, c.Status)
+	assert.Equal(t, "revoked_later", c.Details["status"])
+	assert.Equal(t, "superseded", c.Details["revocation_reason"])
 	assert.Equal(t, report.ResultCompleteValid, r.Result)
 }
 
-// TestRevocationDeclarationPointsAtWhereToLook makes the admission actionable:
-// the certificate names the responders, so a reader who wants the answer is told
-// where to obtain it rather than merely told it is missing.
-func TestRevocationDeclarationPointsAtWhereToLook(t *testing.T) {
+// TestCompromiseAfterTheAssertedTimeIsUndecided is the exception to the rule
+// above, and the reason it cannot simply be "later revocations do not count".
+func TestCompromiseAfterTheAssertedTimeIsUndecided(t *testing.T) {
 	t.Parallel()
 
-	p := newProof(t, prooftest.Options{Files: prooftest.DefaultFiles(1)})
+	p := newProof(t, prooftest.Options{
+		Files: prooftest.DefaultFiles(1),
+		Revocation: &prooftest.RevocationOptions{
+			Status:    ocsp.Revoked,
+			Reason:    ocsp.KeyCompromise,
+			RevokedAt: prooftest.DefaultGenTime.Add(72 * time.Hour),
+		},
+	})
 
 	archive, err := p.Bundle(prooftest.BundleOptions{})
 	require.NoError(t, err)
@@ -338,18 +372,93 @@ func TestRevocationDeclarationPointsAtWhereToLook(t *testing.T) {
 	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
 	require.NoError(t, err)
 
+	assert.Equal(t, report.StatusIndeterminate, statusOf(t, r, "timestamp.revocation"),
+		"a compromise may predate the signature; nothing establishes that it did not")
+	assert.NotEqual(t, report.ResultInvalid, r.Result)
+}
+
+// TestRevocationWithoutEvidenceIsUnestablished states what a proof made before
+// the evidence was captured reports.
+//
+// This is not a limitation of the verifier: the status of a certificate at a
+// past instant cannot be reconstructed afterwards. The honest answer is that the
+// question was not settled — never that it was fine.
+func TestRevocationWithoutEvidenceIsUnestablished(t *testing.T) {
+	t.Parallel()
+
+	bare, err := prooftest.New(prooftest.Options{
+		Files: prooftest.DefaultFiles(1),
+		Anchors: []prooftest.Anchor{{
+			Network:       stubNetwork,
+			TransactionID: "3DZT62LVBKVIYULEPC3QGNEWVMKZEBHXA2PX7BBYU4TL7ZZI2EQQ",
+			BlockNumber:   64055209,
+		}},
+	})
+	require.NoError(t, err)
+
+	archive, err := bare.Bundle(prooftest.BundleOptions{})
+	require.NoError(t, err)
+
+	r, err := anchored(t, bare).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	require.NoError(t, err)
+
 	c, ok := r.Check("timestamp.revocation")
 	require.True(t, ok)
 
-	// The throwaway authority publishes both, so both are reported.
-	assert.Equal(t, prooftest.CRLDistributionPoint, c.Details["crl_distribution_points"])
-	assert.Equal(t, prooftest.OCSPResponder, c.Details["ocsp_responders"])
+	assert.Equal(t, report.StatusSkipped, c.Status)
+	assert.True(t, c.AffectsCompleteness,
+		"missing evidence is a gap in the proof, not a documented scope limit")
+	assert.Equal(t, report.ResultPartialValid, r.Result)
+
+	// Whatever it could not establish, the reader is told where to look.
+	assert.NotEmpty(t, c.Details["ocsp_responders"])
 }
 
-// TestRevocationIsDeclaredEvenWhenTheTokenIsUnreadable keeps the shape of the
-// report independent of the outcome: a consumer finds the same identifiers
-// whatever happened.
-func TestRevocationIsDeclaredEvenWhenTheTokenIsUnreadable(t *testing.T) {
+// TestUnauthorisedResponderIsRefused closes the gap the parsing library leaves:
+// a certificate the authority signed is not thereby entitled to answer for it.
+func TestUnauthorisedResponderIsRefused(t *testing.T) {
+	t.Parallel()
+
+	p := newProof(t, prooftest.Options{
+		Files: prooftest.DefaultFiles(1),
+		Revocation: &prooftest.RevocationOptions{
+			Status:               ocsp.Good,
+			DelegatedResponder:   true,
+			OmitOCSPSigningUsage: true,
+		},
+	})
+
+	archive, err := p.Bundle(prooftest.BundleOptions{})
+	require.NoError(t, err)
+
+	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	require.NoError(t, err)
+
+	assert.Equal(t, report.StatusIndeterminate, statusOf(t, r, "timestamp.revocation"))
+}
+
+// TestTamperedEvidenceIsRefused keeps supplied evidence material rather than
+// authority: it is checked before anything it says is read.
+func TestTamperedEvidenceIsRefused(t *testing.T) {
+	t.Parallel()
+
+	p := newProof(t, prooftest.Options{
+		Files:      prooftest.DefaultFiles(1),
+		Revocation: &prooftest.RevocationOptions{Status: ocsp.Good, Corrupt: true},
+	})
+
+	archive, err := p.Bundle(prooftest.BundleOptions{})
+	require.NoError(t, err)
+
+	r, err := anchored(t, p).VerifyBundle(t.Context(), bytes.NewReader(archive), int64(len(archive)))
+	require.NoError(t, err)
+
+	assert.Equal(t, report.StatusIndeterminate, statusOf(t, r, "timestamp.revocation"))
+}
+
+// TestRevocationIsReportedEvenWhenTheTokenIsUnreadable keeps the shape of the
+// report independent of the outcome.
+func TestRevocationIsReportedEvenWhenTheTokenIsUnreadable(t *testing.T) {
 	t.Parallel()
 
 	p := newProof(t, prooftest.Options{Files: prooftest.DefaultFiles(1), Token: []byte("not a token")})
