@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -32,6 +33,15 @@ const (
 	ManifestAttachmentName = "sealway-proof.json"
 	// TimestampAttachmentName is the embedded DER encoded RFC 3161 artifact.
 	TimestampAttachmentName = "proof-timestamp.tsr"
+	// ChainAttachmentName is the embedded certification path, as concatenated
+	// DER certificates. It is optional: a proof made before the platform began
+	// capturing it simply has none.
+	ChainAttachmentName = "proof-chain.der"
+	// RevocationAttachmentPrefix marks the embedded revocation responses. Every
+	// attachment whose name starts with it is read, because a proof may carry
+	// evidence for more than one certificate of the path and the reader matches
+	// each response to a certificate by content rather than by file name.
+	RevocationAttachmentPrefix = "proof-revocation"
 )
 
 // Sentinel errors describing a certificate whose structure is unusable.
@@ -102,6 +112,12 @@ type Certificate struct {
 	// Timestamp is the raw DER RFC 3161 artifact, either a full TimeStampResp or
 	// a bare TimeStampToken.
 	Timestamp []byte
+	// Chain is the raw certification path the proof carries, when it carries
+	// one. It is material for building a path, never authority on its own.
+	Chain []byte
+	// Revocation holds every embedded revocation response, ordered by
+	// attachment name so that a report does not depend on document layout.
+	Revocation [][]byte
 	// Attachments lists every embedded file found, sorted by name. It is
 	// diagnostic information only.
 	Attachments []AttachmentInfo
@@ -174,6 +190,22 @@ func Open(rs io.ReadSeeker, limits Limits) (cert *Certificate, err error) {
 	}
 
 	cert.Timestamp = token
+
+	// The evidence below postdates the timestamp and is optional, so its absence
+	// is never an error here. What it does or does not establish is decided by
+	// the verifier, which says so in the report.
+	if chain, err := extract(ctx, stubs, ChainAttachmentName, limits, &budget); err == nil {
+		cert.Chain = chain
+	}
+
+	for _, name := range revocationNames(stubs) {
+		data, err := extract(ctx, stubs, name, limits, &budget)
+		if err != nil {
+			continue
+		}
+
+		cert.Revocation = append(cert.Revocation, data)
+	}
 
 	return cert, errors.Join(mErr, tErr)
 }
@@ -325,4 +357,22 @@ func (c *Certificate) AttachmentSummary() string {
 	}
 
 	return strings.Join(names, ", ")
+}
+
+// revocationNames lists the embedded revocation responses, in a stable order.
+//
+// A name is only a hint: which certificate a response covers is decided by
+// reading it, not by what the document calls it.
+func revocationNames(stubs []model.Attachment) []string {
+	var names []string
+
+	for _, a := range stubs {
+		if name := attachmentName(a); strings.HasPrefix(name, RevocationAttachmentPrefix) {
+			names = append(names, name)
+		}
+	}
+
+	sort.Strings(names)
+
+	return slices.Compact(names)
 }

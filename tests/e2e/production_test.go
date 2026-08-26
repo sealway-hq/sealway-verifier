@@ -203,8 +203,13 @@ func TestProductionBundleVerifiesCompletely(t *testing.T) {
 	r, err := v.VerifyBundle(context.Background(), bytes.NewReader(archive), int64(len(archive)))
 	require.NoError(t, err)
 
-	assert.Equal(t, report.ResultCompleteValid, r.Result)
+	// The production fixture predates the capture of revocation evidence, so
+	// one question about it is unanswerable and the run is partial. Nothing
+	// fails: what is established is established, and what is not says so.
+	assert.Equal(t, report.ResultPartialValid, r.Result)
 	assert.Zero(t, r.Summary.Invalid)
+	assert.Equal(t, report.StatusSkipped, statusOf(t, r, "timestamp.revocation"),
+		"the status of a certificate at a past instant cannot be reconstructed afterwards")
 
 	require.NotNil(t, r.Certificate)
 	assert.Equal(t, fixturePublic, r.Certificate.PublicID)
@@ -346,7 +351,8 @@ func TestProductionCertificateWithSourceIsComplete(t *testing.T) {
 		bytes.NewReader(certificate(t)), []verifier.Source{src})
 	require.NoError(t, err)
 
-	assert.Equal(t, report.ResultCompleteValid, r.Result)
+	assert.Equal(t, report.ResultPartialValid, r.Result)
+	assert.Zero(t, r.Summary.Invalid)
 	assert.Equal(t, report.StatusValid, statusOf(t, r, "sources.item.0"))
 	assert.Equal(t, report.StatusValid, statusOf(t, r, "proof_merkle.root"))
 }

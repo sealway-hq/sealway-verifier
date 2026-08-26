@@ -276,6 +276,7 @@ packages/verifier/         public API and verification pipeline
   trust/                   trust material and the providers that obtain it
     bootstrap/             the anchor published in the Official Journal
   eidas/                   qualified status determination
+  revocation/              certificate revocation, from embedded evidence
   anchor/                  provider interface and public network implementations
   bundle/                  safe archive reading
   report/                  canonical verification report
