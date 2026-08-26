@@ -28,6 +28,11 @@ jobs:
           go-version: "1.25"
           check-latest: true
 
+      # .goreleaser.yaml catalogues an SBOM for every archive, which needs syft
+      # on the PATH. Without it the release fails after building everything,
+      # which is how this was found: the pipeline had never actually run.
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -52,6 +57,7 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.sbom.json
             dist/checksums.txt
 
   browser-package:
