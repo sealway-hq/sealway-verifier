@@ -32,11 +32,12 @@
 
     <div class="options">
       <label>
-        <input type="checkbox" id="anchors">
+        <input type="checkbox" id="anchors" checked>
         Read the blockchain anchors
         <span class="hint">
-          Needs the public endpoints to allow cross-origin requests; when they do
-          not, the anchor checks are reported as skipped rather than failed.
+          The only step that leaves your browser. Untick it to verify everything
+          else with no network at all; the anchor checks are then reported as
+          skipped, and the run is partial rather than complete.
         </span>
       </label>
     </div>
