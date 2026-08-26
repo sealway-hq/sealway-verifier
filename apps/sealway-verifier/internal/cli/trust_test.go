@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sealway-hq/sealway-verifier/apps/cli/internal/cli"
+	"github.com/sealway-hq/sealway-verifier/apps/sealway-verifier/internal/cli"
 	"github.com/sealway-hq/sealway-verifier/internal/prooftest"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/report"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/trust"

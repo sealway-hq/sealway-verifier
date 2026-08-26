@@ -48,7 +48,7 @@ These are not linked into the released binary.
 
 The generated mocks under `internal/mocks/` are the only code that imports
 `testify/mock`. They live under `internal/` precisely so that neither the mocks
-nor testify become part of the public API, and `go list -deps ./apps/cli`
+nor testify become part of the public API, and `go list -deps ./apps/sealway-verifier`
 confirms testify is not linked into the released binary.
 
 The generator itself, `github.com/vektra/mockery/v3` (BSD-3-Clause), is invoked

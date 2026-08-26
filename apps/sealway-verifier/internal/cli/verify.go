@@ -17,7 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/sealway-hq/sealway-verifier/apps/cli/internal/render"
+	"github.com/sealway-hq/sealway-verifier/apps/sealway-verifier/internal/render"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/source"
 	"github.com/sealway-hq/sealway-verifier/packages/verifier/trust"

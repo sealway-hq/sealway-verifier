@@ -16,7 +16,7 @@ all: lint test build
 
 .PHONY: build
 build:
-	CGO_ENABLED=0 $(GO) build -o $(BIN) ./apps/cli
+	CGO_ENABLED=0 $(GO) build -o $(BIN) ./apps/sealway-verifier
 
 .PHONY: test
 test:
@@ -85,7 +85,7 @@ mocks-check: mocks
 cross:
 	@for target in $(RELEASE_TARGETS); do \
 		GOOS=$${target%/*} GOARCH=$${target#*/} CGO_ENABLED=0 \
-			$(GO) build -o /dev/null ./apps/cli || exit 1; \
+			$(GO) build -o /dev/null ./apps/sealway-verifier || exit 1; \
 		echo "built $$target"; \
 	done
 	@GOOS=js GOARCH=wasm CGO_ENABLED=0 $(GO) build ./packages/... && echo "built js/wasm"

@@ -57,12 +57,32 @@ worth knowing about. That comparison never feeds the cryptographic result.
 
 ## Installation
 
-Download a binary from the [releases page](https://github.com/sealway-hq/sealway-verifier/releases),
-or build from source:
+Download a binary from the [releases page](https://github.com/sealway-hq/sealway-verifier/releases):
 
 ```bash
-go build -o sealway-verifier ./apps/cli
+gh attestation verify sealway-verifier_0.1.0_linux_amd64.tar.gz \
+  --repo sealway-hq/sealway-verifier
 ```
+
+Every archive carries a build provenance attestation, which is worth checking:
+it binds the artifact to the workflow and commit that produced it, where a
+checksum only proves the archive matches what the release says about it.
+
+In a GitHub Actions workflow:
+
+```yaml
+- uses: sealway-hq/setup-sealway-verifier@v1
+- run: sealway-verifier verify proof.zip --trust-dir ./trust
+```
+
+With Go, or from source:
+
+```bash
+go install github.com/sealway-hq/sealway-verifier/apps/sealway-verifier@latest
+go build ./apps/sealway-verifier
+```
+
+There is also a container image, `ghcr.io/sealway-hq/sealway-verifier`.
 
 Go 1.25 or newer. The build is pure Go with no cgo, so cross compiling needs
 nothing beyond the toolchain.
@@ -128,6 +148,39 @@ A file you name explicitly with `--source`, or that a bundle carries in its
 certified item is reported as a failure. A file merely discovered by
 `--sources-dir` is disregarded instead, because a directory may legitimately hold
 unrelated files.
+
+---
+
+### Verifying a proof from a test or staging environment
+
+A proof made against a mock or in-house timestamping authority verifies too. It
+simply cannot be *qualified*: qualified status comes only from an authenticated
+European Trusted List, and a test authority is not in one. Nothing else about the
+proof depends on that.
+
+Hand the verifier the authority's own root and say plainly that no claim is being
+made about qualified status:
+
+```bash
+sealway-verifier verify proof.zip \
+  --timestamp-roots ./test-tsa-root.pem \
+  --trust-source none \
+  --offline
+```
+
+`--timestamp-roots` takes a PEM bundle of the anchors the timestamp signer should
+chain to, so `Signer certificate path` becomes `VALID` against your own
+authority. `--trust-source none` reports qualified status as skipped with an
+explicit reason rather than reaching for the official lists that will not cover
+it.
+
+Everything else is verified exactly as it is in production: the source digests,
+the Merkle tree, the message imprint, the accumulator and the anchors. The result
+is `PARTIAL VALID` and exit code 3, because one question was deliberately left
+unasked — not because anything failed.
+
+The verifier ships no trust store of its own, and this is why: deciding which
+roots to trust is a policy decision that belongs to whoever runs it.
 
 ---
 
@@ -531,7 +584,7 @@ make test-live   # or: SEALWAY_VERIFIER_LIVE_TESTS=1 go test ./tests/e2e/
 ### Layout
 
 ```text
-apps/cli/                  command line interface
+apps/sealway-verifier/     command line interface
 apps/wasm/                 browser module and its demonstration page
   npm/                     the package published to GitHub Packages
 packages/verifier/         public API and verification pipeline

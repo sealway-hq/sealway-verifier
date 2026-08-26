@@ -9,7 +9,7 @@ before:
 
 builds:
   - id: sealway-verifier
-    main: ./apps/cli
+    main: ./apps/sealway-verifier
     binary: sealway-verifier
     env:
       # The verifier is pure Go on purpose: no cgo keeps cross building simple
