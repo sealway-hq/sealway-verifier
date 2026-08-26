@@ -1,9 +1,16 @@
 name: Release
 
+# A release is published from the GitHub UI or with `gh release create`. That is
+# the only trigger: a tag on its own publishes nothing, so a mistyped or
+# throwaway tag can simply be deleted rather than yanked out of two registries
+# after the fact.
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -37,6 +44,8 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
+          # The release exists already and triggered this run, so GoReleaser
+          # uploads onto it instead of creating one.
           args: release --clean
         env:
           # The only credential involved is the token GitHub issues to this run.
@@ -89,12 +98,28 @@ jobs:
       - name: Assemble the package
         run: make npm-package
 
-      - name: Take the version from the tag
+      - name: Take the version from the release
+        id: version
         working-directory: apps/wasm/npm
-        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG#v}"
+          npm version --no-git-tag-version --allow-same-version "$version"
+
+          # A prerelease goes out under `next`, so `npm install` keeps returning
+          # the last stable version to everyone who did not ask for this one.
+          case "$version" in
+            *-*) dist_tag="next" ;;
+            *) dist_tag="latest" ;;
+          esac
+
+          echo "dist_tag=${dist_tag}" >> "$GITHUB_OUTPUT"
+          echo "Publishing \`${version}\` under \`${dist_tag}\`." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish
         working-directory: apps/wasm/npm
-        run: npm publish
+        run: npm publish --tag "$DIST_TAG"
         env:
+          DIST_TAG: ${{ steps.version.outputs.dist_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

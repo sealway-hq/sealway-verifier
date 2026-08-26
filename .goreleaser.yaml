@@ -67,7 +67,9 @@ changelog:
       - "^ci:"
 
 release:
-  draft: true
+  # The release already exists and is what triggered the workflow, so GoReleaser
+  # uploads its artifacts onto it rather than creating one of its own.
+  mode: append
   prerelease: auto
   footer: |
     ## Verifying a download
