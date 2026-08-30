@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -147,6 +148,50 @@ func (f *Fetcher) Describe() string {
 // The list of lists is fetched and authenticated first; only then is its pointer
 // for the requested territory followed. A territory that the authenticated list
 // does not point at is not fetched at all.
+// Territories lists the scheme territories the European list of lists points at.
+//
+// The list of lists is verified against the pinned anchor before it is read, so
+// the answer comes from a document the Commission signed rather than from
+// whatever a mirror chose to serve.
+//
+// It exists so that an operator building a mirror can serve every list without
+// naming thirty territories on a command line, and without a hard coded list
+// that goes stale the day a member state is added.
+func (f *Fetcher) Territories(ctx context.Context) ([]string, error) {
+	raw, err := f.fetch(ctx, f.lotlURL)
+	if err != nil {
+		return nil, err
+	}
+
+	verified, err := xmldsig.Verify(raw, f.signers, xmldsig.Limits{MaxBytes: f.maxSize})
+	if err != nil {
+		return nil, fmt.Errorf("the European list of lists is not authentic: %w", err)
+	}
+
+	lotl, err := trustlist.Parse(verified)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := map[string]bool{}
+	out := make([]string, 0, len(lotl.Pointers))
+
+	for _, p := range lotl.Pointers {
+		territory := strings.ToUpper(strings.TrimSpace(p.Territory))
+		if territory == "" || seen[territory] {
+			continue
+		}
+
+		seen[territory] = true
+
+		out = append(out, territory)
+	}
+
+	sort.Strings(out)
+
+	return out, nil
+}
+
 func (f *Fetcher) Material(ctx context.Context, req Request) (*Material, error) {
 	if req.Offline {
 		return nil, fmt.Errorf("%w: network access is disabled", ErrUnavailable)

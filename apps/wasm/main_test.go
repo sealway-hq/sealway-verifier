@@ -7,12 +7,17 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha512"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall/js"
 	"testing"
 	"time"
@@ -360,4 +365,225 @@ func jsError(v js.Value) error {
 	}
 
 	return jsErr(v.String())
+}
+
+// The entry points added for the website's standalone tools. Each is driven
+// through JavaScript, because the contract that matters is the one a page sees.
+
+// TestTheModulePublishesEveryTool pins the surface a consumer resolves.
+func TestTheModulePublishesEveryTool(t *testing.T) {
+	api := js.Global().Get("sealwayVerifier")
+
+	for _, name := range []string{
+		"verify", "verifyTimestamp", "verifyMerkle", "inspectTimestamp", "requiredTerritory",
+	} {
+		assert.Equal(t, js.TypeFunction, api.Get(name).Type(), "%s must be callable", name)
+	}
+}
+
+// TestVerifyAcceptsACertificateOnItsOwn is the gap that made a page tell people
+// to re-zip a file they had just been given.
+func TestVerifyAcceptsACertificateOnItsOwn(t *testing.T) {
+	value, err := await(t, call("verify", bytesValue(productionCertificate(t)),
+		js.ValueOf(map[string]any{"verifyAnchors": false, "trust": trustMaterial(t)})))
+	require.NoError(t, err)
+
+	report := decode(t, value)
+	assert.Equal(t, "SW-2026-D8DY92C8", report["certificate"].(map[string]any)["public_id"])
+
+	statuses := statusesOf(t, report)
+
+	// Without the original files, the file dependent steps cannot conclude and
+	// say so, while everything the certificate carries is still verified.
+	assert.Equal(t, "valid", statuses["timestamp.qualified"])
+	assert.Equal(t, "valid", statuses["accumulator.root"])
+	assert.Equal(t, "skipped", statuses["sources.availability"])
+	assert.NotEqual(t, "complete_valid", report["result"])
+}
+
+// TestVerifyNamesWhatItWasGiven replaces "not a valid zip file", which is what a
+// person saw after dropping the wrong file.
+func TestVerifyNamesWhatItWasGiven(t *testing.T) {
+	_, err := await(t, call("verify", bytesValue([]byte("neither a zip nor a pdf")),
+		js.ValueOf(map[string]any{"verifyAnchors": false})))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "neither a proof bundle nor a Sealway certificate")
+}
+
+// TestVerifyTimestampWorksOnABareToken is the tool the website could not build.
+func TestVerifyTimestampWorksOnABareToken(t *testing.T) {
+	value, err := await(t, call("verifyTimestamp", bytesValue(productionToken(t)),
+		js.ValueOf(map[string]any{"trust": trustMaterial(t)})))
+	require.NoError(t, err)
+
+	report := decode(t, value)
+	statuses := statusesOf(t, report)
+
+	assert.Equal(t, "valid", statuses["timestamp.signature"])
+	assert.Equal(t, "valid", statuses["timestamp.qualified"])
+
+	// Only the timestamp was asked about, so only the timestamp is reported.
+	sections := report["sections"].([]any)
+	require.Len(t, sections, 1)
+}
+
+// TestVerifyTimestampAcceptsTextEncodings covers how a token reaches a page when
+// it is not a file: pasted, or carried in a JSON payload.
+func TestVerifyTimestampAcceptsTextEncodings(t *testing.T) {
+	der := productionToken(t)
+
+	for name, encoded := range map[string]string{
+		"base64":      base64.StdEncoding.EncodeToString(der),
+		"hexadecimal": hex.EncodeToString(der),
+	} {
+		t.Run(name, func(t *testing.T) {
+			value, err := await(t, call("verifyTimestamp", js.ValueOf(encoded),
+				js.ValueOf(map[string]any{})))
+			require.NoError(t, err)
+			assert.Equal(t, "valid", statusesOf(t, decode(t, value))["timestamp.signature"])
+		})
+	}
+
+	_, err := await(t, call("verifyTimestamp", js.ValueOf("not base64 and not hex ****"),
+		js.ValueOf(map[string]any{})))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "neither base64 nor hexadecimal")
+}
+
+// TestInspectTimestampNamesTheAuthority covers the identity a verdict does not
+// carry, which is what the site's existing page shows.
+func TestInspectTimestampNamesTheAuthority(t *testing.T) {
+	value, err := await(t, call("inspectTimestamp", bytesValue(productionToken(t))))
+	require.NoError(t, err)
+
+	var d map[string]any
+	require.NoError(t, json.Unmarshal([]byte(value.String()), &d))
+
+	signer := d["signer"].(map[string]any)
+	assert.Equal(t, "inDenova TSU 003", signer["common_name"])
+	assert.Equal(t, "inDenova TSA 003", signer["issuer_common_name"])
+	assert.NotEmpty(t, signer["subject"])
+	assert.NotEmpty(t, signer["serial_number"])
+	assert.NotEmpty(t, signer["signature_algorithm"])
+	assert.NotEmpty(t, d["gen_time"])
+}
+
+// TestRequiredTerritoryLetsAHostFetchOneList is what keeps a page from
+// downloading every national list to read one of them.
+func TestRequiredTerritoryLetsAHostFetchOneList(t *testing.T) {
+	value, err := await(t, call("requiredTerritory", bytesValue(productionToken(t))))
+	require.NoError(t, err)
+	assert.Equal(t, "ES", value.String())
+}
+
+// TestVerifyMerkleBothWays covers the two questions the profile answers.
+func TestVerifyMerkleBothWays(t *testing.T) {
+	// Two digests, and the root they build under this profile.
+	a := sha512.Sum512([]byte("a"))
+	b := sha512.Sum512([]byte("b"))
+
+	value, err := await(t, call("verifyMerkle", js.ValueOf(map[string]any{
+		"leaves": []any{hex.EncodeToString(a[:]), hex.EncodeToString(b[:])},
+	})))
+	require.NoError(t, err)
+
+	report := decode(t, value)
+	section := report["sections"].([]any)[0].(map[string]any)
+	check := section["checks"].([]any)[0].(map[string]any)
+	root := check["details"].(map[string]any)["computed_root"].(string)
+	require.Len(t, root, 128)
+
+	// The same digests against that root now conclude rather than merely compute.
+	value, err = await(t, call("verifyMerkle", js.ValueOf(map[string]any{
+		"leaves": []any{hex.EncodeToString(a[:]), hex.EncodeToString(b[:])},
+		"root":   root,
+	})))
+	require.NoError(t, err)
+	assert.Equal(t, "valid", statusesOf(t, decode(t, value))["proof_merkle.root"])
+
+	// Swapping them must not.
+	value, err = await(t, call("verifyMerkle", js.ValueOf(map[string]any{
+		"leaves": []any{hex.EncodeToString(b[:]), hex.EncodeToString(a[:])},
+		"root":   root,
+	})))
+	require.NoError(t, err)
+	assert.Equal(t, "invalid", statusesOf(t, decode(t, value))["proof_merkle.root"])
+}
+
+// TestVerifyMerkleRefusesASiblingWithNoSide states why the side is required:
+// which of the two a sibling is changes the value it folds to.
+func TestVerifyMerkleRefusesASiblingWithNoSide(t *testing.T) {
+	a := sha512.Sum512([]byte("a"))
+
+	_, err := await(t, call("verifyMerkle", js.ValueOf(map[string]any{
+		"leaf": hex.EncodeToString(a[:]),
+		"root": hex.EncodeToString(a[:]),
+		"path": []any{map[string]any{"digest": hex.EncodeToString(a[:])}},
+	})))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `must be "left" or "right"`)
+}
+
+// call invokes one of the module's exports through JavaScript.
+func call(name string, args ...js.Value) js.Value {
+	in := make([]any, 0, len(args))
+	for _, a := range args {
+		in = append(in, a)
+	}
+
+	return js.Global().Get("sealwayVerifier").Call(name, in...)
+}
+
+// productionCertificate is the certificate PDF, read out of the production
+// bundle the end to end suite uses.
+func productionCertificate(t *testing.T) []byte {
+	t.Helper()
+
+	zr, err := zip.NewReader(bytes.NewReader(productionProof(t)), int64(len(productionProof(t))))
+	require.NoError(t, err)
+
+	for _, f := range zr.File {
+		if strings.HasSuffix(f.Name, ".pdf") && strings.Contains(f.Name, "certificate") {
+			rc, err := f.Open()
+			require.NoError(t, err)
+
+			defer rc.Close()
+
+			data, err := io.ReadAll(rc)
+			require.NoError(t, err)
+
+			return data
+		}
+	}
+
+	t.Fatal("the production bundle carries no certificate")
+
+	return nil
+}
+
+// productionToken is the RFC 3161 artifact, read from the loose copy the bundle
+// carries beside the certificate.
+func productionToken(t *testing.T) []byte {
+	t.Helper()
+
+	zr, err := zip.NewReader(bytes.NewReader(productionProof(t)), int64(len(productionProof(t))))
+	require.NoError(t, err)
+
+	for _, f := range zr.File {
+		if strings.HasSuffix(f.Name, ".tsr") {
+			rc, err := f.Open()
+			require.NoError(t, err)
+
+			defer rc.Close()
+
+			data, err := io.ReadAll(rc)
+			require.NoError(t, err)
+
+			return data
+		}
+	}
+
+	t.Fatal("the production bundle carries no timestamp artifact")
+
+	return nil
 }

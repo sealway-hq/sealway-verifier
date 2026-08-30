@@ -32,6 +32,11 @@ const sectionTimestampTitle = "Qualified timestamp"
 func (r *run) verifyTimestamp(ctx context.Context, cert *pdf.Certificate) {
 	reportProgress(r.opts.progress, Progress{Stage: StageTimestamp})
 
+	// A certificate carries its own validation material. A caller verifying a
+	// bare token supplies it directly instead; the checks below cannot tell the
+	// difference, and must not, or the two paths would drift apart.
+	r.evidence = evidence{chain: cert.Chain, revocation: cert.Revocation}
+
 	if len(cert.Timestamp) == 0 {
 		r.skipTimestampStage("The certificate does not embed an RFC 3161 timestamp artifact.")
 
@@ -55,7 +60,7 @@ func (r *run) verifyTimestamp(ctx context.Context, cert *pdf.Certificate) {
 	r.checkSignerUsage(token)
 	r.checkTokenImprint(token)
 	r.checkTokenMetadata(token)
-	r.checkTrustChain(ctx, token, cert)
+	r.checkTrustChain(ctx, token)
 }
 
 func (r *run) skipTimestampStage(reason string) {
@@ -212,12 +217,10 @@ func (r *run) checkTokenImprint(t *timestamp.Token) {
 		title = "Message imprint matches the proof root"
 	)
 
-	root := r.manifest.Proof.MerkleRoot
+	root := r.expectedImprint()
 	if root.IsZero() {
 		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
-			report.NewSkipped(id, title,
-				"The manifest declares no proof Merkle root, so there is nothing to compare the "+
-					"message imprint with."))
+			report.NewSkipped(id, title, r.noImprintReason()))
 
 		return
 	}
@@ -267,6 +270,15 @@ func (r *run) checkTokenMetadata(t *timestamp.Token) {
 		id    = "timestamp.metadata"
 		title = "Declared timestamp metadata"
 	)
+
+	if r.manifest == nil {
+		r.builder.Add(report.SectionTimestamp, sectionTimestampTitle,
+			report.NewOutOfScope(id, title,
+				"There is no proof manifest to compare the token with. The token is the "+
+					"authoritative source for its own metadata, so nothing is lost."))
+
+		return
+	}
 
 	declared := r.manifest.Notarization.ProofTimestamp
 	if declared == nil {
@@ -324,11 +336,11 @@ func (r *run) checkTokenMetadata(t *timestamp.Token) {
 // caller accepts; only the third, established against an authenticated European
 // Trusted List, says the producer was a recognised qualified service at the time
 // the token asserts.
-func (r *run) checkTrustChain(ctx context.Context, t *timestamp.Token, cert *pdf.Certificate) {
+func (r *run) checkTrustChain(ctx context.Context, t *timestamp.Token) {
 	assessment := r.assessQualification(ctx, t)
 
 	r.checkSignerPath(t, assessment)
-	r.checkRevocation(t, cert)
+	r.checkRevocation(t)
 	r.checkQualifiedStatus(t, assessment)
 }
 
@@ -540,7 +552,7 @@ func (r *run) trustChainError(t *timestamp.Token) error {
 // a browser cannot make the request at all. Evidence captured when the proof was
 // made is what keeps the question answerable at all, so a proof that carries
 // none leaves it unanswered rather than answered favourably.
-func (r *run) checkRevocation(t *timestamp.Token, cert *pdf.Certificate) {
+func (r *run) checkRevocation(t *timestamp.Token) {
 	const (
 		id    = "timestamp.revocation"
 		title = "Signer certificate revocation"
@@ -558,7 +570,7 @@ func (r *run) checkRevocation(t *timestamp.Token, cert *pdf.Certificate) {
 		return
 	}
 
-	if len(cert.Revocation) == 0 {
+	if len(r.evidence.revocation) == 0 {
 		add(report.NewSkipped(id, title,
 			"This proof carries no revocation evidence, and the status of a certificate at a past "+
 				"instant cannot be reconstructed afterwards. Whether the signing certificate had "+
@@ -567,7 +579,7 @@ func (r *run) checkRevocation(t *timestamp.Token, cert *pdf.Certificate) {
 		return
 	}
 
-	issuer := issuerOf(t.Signer, parseChain(cert.Chain), t.Certificates)
+	issuer := issuerOf(t.Signer, parseChain(r.evidence.chain), t.Certificates)
 	if issuer == nil {
 		add(report.NewIndeterminate(id, title,
 			"The certificate that issued the signing certificate is not available, so the "+
@@ -577,7 +589,7 @@ func (r *run) checkRevocation(t *timestamp.Token, cert *pdf.Certificate) {
 		return
 	}
 
-	result, err := revocation.Check(cert.Revocation, t.Signer, issuer, t.GenTime)
+	result, err := revocation.Check(r.evidence.revocation, t.Signer, issuer, t.GenTime)
 	if err != nil {
 		add(report.NewIndeterminate(id, title,
 			"The revocation evidence this proof carries could not be used: "+err.Error()+
@@ -703,4 +715,37 @@ func issuerOf(signer *x509.Certificate, pools ...[]*x509.Certificate) *x509.Cert
 	}
 
 	return nil
+}
+
+// evidence is the long term validation material a run has: the certification
+// path and the revocation responses. A bundle takes it from the certificate's
+// attachments, a caller verifying a bare token supplies it directly, and the
+// checks that read it cannot tell which.
+type evidence struct {
+	chain      []byte
+	revocation [][]byte
+}
+
+// expectedImprint is the digest the token must stamp.
+//
+// For a proof it is the certified Merkle root. For a bare token it is whatever
+// the caller said they expect, and nothing when they said nothing: a token
+// verified on its own is a statement about a digest, not about which digest.
+func (r *run) expectedImprint() proof.Hash {
+	if r.manifest != nil {
+		return r.manifest.Proof.MerkleRoot
+	}
+
+	return r.imprint
+}
+
+func (r *run) noImprintReason() string {
+	if r.manifest != nil {
+		return "The manifest declares no proof Merkle root, so there is nothing to compare the " +
+			"message imprint with."
+	}
+
+	return "No expected digest was supplied, so what this token stamps was read but not compared " +
+		"with anything. The token says what it covers; whether that is the right thing is a " +
+		"question only the caller can ask."
 }

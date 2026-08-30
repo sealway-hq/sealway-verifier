@@ -307,3 +307,37 @@ func TestSnapshotFormatIsDocumented(t *testing.T) {
 	assert.Equal(t, "sealway-trust-snapshot/1", trust.SnapshotFormat)
 	assert.Equal(t, "manifest.json", trust.ManifestName)
 }
+
+// TestTrustFetchAllTerritoriesAsksTheListOfLists covers the sweep an operator
+// runs to build a mirror.
+//
+// The territories come from the signed list of lists rather than a hard coded
+// set, so a member state added next year is picked up without a release here.
+func TestTrustFetchAllTerritoriesAsksTheListOfLists(t *testing.T) {
+	t.Parallel()
+
+	lotl, list := realTrustMaterial(t)
+	base := mirror(t, lotl, list)
+
+	dir := filepath.Join(t.TempDir(), "trust")
+
+	res := run(t, "trust", "fetch", dir, "--all-territories",
+		"--lotl-url", base+"/lotl.xml",
+		"--list-url", base+"/lists/{territory}.xml")
+
+	require.Equal(t, cli.ExitCompleteValid, res.code, "stderr: %s", res.stderr)
+	assert.Contains(t, res.stdout, "points at")
+
+	// This mirror serves one national list. The rest are unreachable, and one
+	// member state being down must not cost the others: what was obtained is
+	// written, and what was not is named.
+	assert.FileExists(t, filepath.Join(dir, "lists", "es.xml"))
+	assert.Contains(t, res.stdout, "could not be fetched and are absent from the snapshot")
+
+	// The snapshot that results is still usable for the territory it does hold.
+	proof := filepath.Join("..", "..", "..", "..", "testdata",
+		"sealway-proof-SW-2026-D8DY92C8.zip")
+	verify := run(t, "verify", proof, "--trust-dir", dir, "--offline", "--json")
+	assert.NotEqual(t, cli.ExitError, verify.code)
+	assert.Contains(t, verify.stdout, `"timestamp.qualified"`)
+}

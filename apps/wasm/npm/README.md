@@ -40,7 +40,18 @@ report.result;          // 'complete_valid' | 'partial_valid' | 'invalid'
 report.sections;        // every check, with its status and why
 ```
 
-`verify` takes a `File`, `Blob`, `ArrayBuffer` or `Uint8Array`.
+`verify` takes a `File`, `Blob`, `ArrayBuffer` or `Uint8Array`, and reads either
+container: a `.zip` proof bundle or a `.pdf` certificate on its own. The format
+is detected from the bytes, so a page can accept whichever file someone was
+given.
+
+A certificate without its original files verifies everything the certificate
+carries — the manifest, the timestamp, the accumulator, the anchors — and reports
+the file dependent steps as skipped. Add the files to close that gap:
+
+```js
+await verifier.verify(certificate, { sources: [...fileInput.files] });
+```
 
 **Pass `verifyAnchors: true` for a complete verification.** It defaults to
 `false` so that importing this package never makes an outbound request nobody
@@ -60,6 +71,74 @@ interface.
 attempted; `indeterminate` means it was attempted and the evidence did not
 settle it. Neither ever reads as success, and an interface that renders them as
 a green tick is misreporting.
+
+## The other tools
+
+Each returns the same `Report`, so one renderer serves all of them.
+
+### A bare timestamp
+
+```js
+const report = await verifier.verifyTimestamp(token, { imprint });
+```
+
+`token` may be a `File`, bytes, or the base64 or hexadecimal text people paste.
+
+The report carries **only the timestamp section**. A token is a statement about a
+digest and a moment; nothing about a proof, its files or its anchors is present
+to report on, and emitting skipped checks for them would report the absence of
+things that were never part of the question.
+
+Every check is performed by the code that runs inside a full verification, so a
+token that verifies here verifies identically inside the proof that carries it.
+
+`imprint` is optional. Without it the imprint is read and reported but compared
+with nothing: a token says what it covers, and whether that is the *right* thing
+is a question only you can ask.
+
+Two checks behave differently here, and neither is a failure. `timestamp.metadata`
+compares the token with a proof manifest, which a bare token has none of, so it
+is out of scope. `timestamp.revocation` needs evidence a certificate normally
+carries; supply it as `revocation` if you have it, or it stays unestablished.
+
+### Reading a token without judging it
+
+```js
+const details = await verifier.inspectTimestamp(token);
+details.signer.common_name;          // who issued it
+details.signer.issuer_common_name;
+details.signer.signature_algorithm;
+details.qualified_statement;         // a claim by its issuer, never evidence
+```
+
+No verdict. Reading a token and believing it are different acts.
+
+This does not decode the raw ASN.1 into a browsable tree. A general DER explorer
+is a different tool, and shipping one inside a 3 MB WebAssembly module to fill a
+UI panel is a poor trade — keep a JavaScript ASN.1 library for that panel.
+
+### The Merkle profile
+
+```js
+// Rebuild a root from digests, and compare it if you know what to expect.
+await verifier.verifyMerkle({ leaves, root });
+
+// Or check that one leaf belongs to a tree.
+await verifier.verifyMerkle({ leaf, path, root });
+```
+
+Digests may be `Uint8Array` or lower-case hexadecimal. Each `path` entry needs
+its `position`, `"left"` or `"right"`: the profile folds
+`SHA-512(0x01 || left || right)`, so the side changes the value.
+
+Without a `root`, the tree is rebuilt and its root reported, but nothing is
+concluded — computing is not concluding, and the check says so.
+
+Two rules of this profile are where an independent implementation reliably
+diverges, and both are applied here by the same code the full verification uses:
+an incomplete level duplicates its last node, **including a tree of one leaf**,
+and an internal node hashes the raw digest bytes of its children rather than
+their hexadecimal text.
 
 ## Trust material
 
@@ -85,6 +164,28 @@ it cannot invent a qualified service.
 and a snapshot frozen into a build goes stale. Staleness is an availability
 problem here, not a security one — but a list that no longer covers the moment
 you are asking about leaves qualification undecided.
+
+### Serving more than one territory
+
+Which national list a proof needs is decided by the country in the certificate
+that stamped it, not by configuration. Serve them all and the package fetches the
+one it needs:
+
+```bash
+sealway-verifier trust fetch ./public/trust --all-territories
+```
+
+The territories come from the signed list of lists, so a member state added next
+year is picked up without a change here. A list that cannot be fetched is named
+and left out rather than failing the sweep.
+
+This matters for weight. Every list the Union publishes comes to roughly 25 MB,
+which is more than the WebAssembly module itself; a proof needs exactly one of
+them, and only that one is downloaded. Changing eIDAS provider — from a Spanish
+authority to a French one, say — then needs no change to your code.
+
+`requiredTerritory(token)` answers the same question directly, for a host
+deciding what to serve.
 
 ## Astro
 
