@@ -106,7 +106,7 @@ func (e *Evaluator) Evaluate(
 		return out
 	}
 
-	territory := territoryOf(signer)
+	territory := TerritoryOf(signer)
 	if territory == "" {
 		out.Reasons = append(out.Reasons, fmt.Sprintf(
 			"the signing certificate %q declares no country, so the national Trusted List that "+
@@ -232,12 +232,17 @@ func (e *Evaluator) authenticateList(
 	return list, nil
 }
 
-// territoryOf returns the scheme territory whose Trusted List would cover a
+// TerritoryOf returns the scheme territory whose Trusted List would cover a
 // certificate.
 //
 // A trust service is supervised by the member state it is established in, which
-// its certificate states as the subject country.
-func territoryOf(cert *x509.Certificate) string {
+// its certificate states as the subject country. It is exported so that a caller
+// serving Trusted List material can fetch the one list a proof needs rather than
+// every list the European Union publishes.
+//
+// An empty string means the certificate names no country, which is also why
+// qualified status would be left undetermined.
+func TerritoryOf(cert *x509.Certificate) string {
 	for _, c := range cert.Subject.Country {
 		if c = strings.ToUpper(strings.TrimSpace(c)); c != "" {
 			return c

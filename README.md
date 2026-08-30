@@ -184,6 +184,34 @@ roots to trust is a policy decision that belongs to whoever runs it.
 
 ---
 
+### The pieces on their own
+
+A proof is verified as a whole, but the parts answer questions of their own, and
+the library exposes each so that a tool built on it is not a second
+implementation of the same rules.
+
+**A bare RFC 3161 timestamp.** `VerifyTimestamp` establishes what a token says
+and whether the authority that issued it was a qualified trust service at the
+time it asserts. The report carries only the timestamp section: a token is a
+statement about a digest and a moment, and nothing about a proof, its files or
+its anchors is present to report on. `InspectTimestamp` decodes one without
+judging it, for a reader who wants to see who issued a token before deciding
+whether to believe it.
+
+**The Merkle profile.** `VerifyMerkle` rebuilds a root from digests, or checks
+that one leaf belongs to a tree. The two rules where an independent
+implementation reliably diverges are applied by the same code the full
+verification uses: an incomplete level duplicates its last node, including a tree
+of one leaf, and an internal node hashes the raw digest bytes of its children
+rather than their hexadecimal text.
+
+**Which Trusted List a proof needs.** `RequiredTerritory` reads the country of
+the certificate that stamped a token. Every list the European Union publishes
+comes to roughly 25 MB and a proof needs exactly one of them, so a mirror can
+serve them all while a browser downloads only the one that answers the question.
+
+---
+
 ## Complete, partial and invalid
 
 Every step reports exactly one of `valid`, `invalid` or `skipped`. A step whose
@@ -391,6 +419,17 @@ them directly. Take a snapshot instead:
 sealway-verifier trust fetch ./trust --territory ES
 sealway-verifier verify proof.zip --trust-dir ./trust --offline
 ```
+
+For a mirror, take every list the signed list of lists points at rather than
+naming thirty territories, so that a member state added next year is picked up
+without a change here:
+
+```bash
+sealway-verifier trust fetch ./trust --all-territories
+```
+
+A list that cannot be fetched is named and left out rather than failing the
+sweep: one member state being unreachable must not cost the other twenty-nine.
 
 A snapshot holds the **official signed documents unchanged**, so whoever reads it
 verifies the European signatures themselves. A mirror is therefore a transport

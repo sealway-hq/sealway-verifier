@@ -190,6 +190,11 @@ type run struct {
 	manifest *proof.Manifest
 	token    *timestamp.Token
 	matches  *matchResult
+
+	// evidence and imprint are what a caller verifying a bare token supplies in
+	// place of what a certificate would have carried.
+	evidence evidence
+	imprint  proof.Hash
 }
 
 func newRun(opts *options, sources []Source) *run {

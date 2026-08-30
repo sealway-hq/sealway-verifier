@@ -7,6 +7,8 @@
 /apps/wasm/npm/LICENSE
 sealway-verifier
 sealway-verifier.exe
+# `go build ./apps/wasm` writes an executable named after the directory.
+/wasm
 
 # Test output
 coverage.out

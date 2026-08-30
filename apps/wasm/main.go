@@ -22,7 +22,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"syscall/js"
 	"time"
@@ -46,8 +46,12 @@ func main() {
 // functions behind it directly.
 func register() {
 	js.Global().Set("sealwayVerifier", js.ValueOf(map[string]any{
-		"verify":        js.FuncOf(verify),
-		"schemaVersion": verifier.ReportSchemaVersion,
+		"verify":            js.FuncOf(verify),
+		"verifyTimestamp":   js.FuncOf(verifyTimestamp),
+		"verifyMerkle":      js.FuncOf(verifyMerkle),
+		"inspectTimestamp":  js.FuncOf(inspectTimestamp),
+		"requiredTerritory": js.FuncOf(requiredTerritory),
+		"schemaVersion":     verifier.ReportSchemaVersion,
 	}))
 }
 
@@ -76,19 +80,34 @@ func verify(_ js.Value, args []js.Value) any {
 		return rejected(err.Error())
 	}
 
+	sources, err := toSources(options.Get("sources"))
+	if err != nil {
+		return rejected(err.Error())
+	}
+
 	return promise(func() (any, error) {
-		report, err := verifier.New(opts...).
-			VerifyBundle(context.Background(), bytes.NewReader(proof), int64(len(proof)))
+		v := verifier.New(opts...)
+
+		var report *verifier.Report
+
+		switch container(proof) {
+		case containerBundle:
+			report, err = v.VerifyBundle(context.Background(),
+				bytes.NewReader(proof), int64(len(proof)))
+		case containerCertificate:
+			report, err = v.VerifyCertificate(context.Background(),
+				bytes.NewReader(proof), sources)
+		default:
+			return nil, errors.New(
+				"this is neither a proof bundle nor a Sealway certificate: a bundle is a .zip " +
+					"archive and a certificate is a .pdf document")
+		}
+
 		if err != nil {
 			return nil, err
 		}
 
-		encoded, err := json.Marshal(report)
-		if err != nil {
-			return nil, err
-		}
-
-		return string(encoded), nil
+		return encode(report)
 	})
 }
 
@@ -111,6 +130,16 @@ func buildOptions(o js.Value) ([]verifier.Option, error) {
 
 	if t := o.Get("timeoutSeconds"); t.Type() == js.TypeNumber && t.Float() > 0 {
 		opts = append(opts, verifier.WithNetworkTimeout(time.Duration(t.Float())*time.Second))
+	}
+
+	// The public endpoints may refuse a cross-origin request, and a host that
+	// runs a proxy answering them has no way to say so otherwise.
+	if endpoints := o.Get("anchorEndpoints"); !endpoints.IsUndefined() && !endpoints.IsNull() {
+		keys := js.Global().Get("Object").Call("keys", endpoints)
+		for i := range keys.Length() {
+			network := keys.Index(i).String()
+			opts = append(opts, verifier.WithAnchorEndpoint(network, endpoints.Get(network).String()))
+		}
 	}
 
 	material, err := toMaterial(o.Get("trust"))

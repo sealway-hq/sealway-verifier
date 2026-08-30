@@ -140,6 +140,37 @@ export async function createVerifier(options = {}) {
     material = await loadTrustMaterial(trustBaseUrl, territories);
   }
 
+  // Loading a national list on demand rather than up front. Every list the
+  // European Union publishes comes to about 25 MB, and a proof needs exactly
+  // one of them: the one covering the authority that stamped it.
+  const loaded = new Map(Object.entries(material?.lists ?? {}));
+
+  async function withTerritory(territory) {
+    if (!material || !territory || loaded.has(territory)) {
+      return material;
+    }
+
+    if (!trustBaseUrl) {
+      return material;
+    }
+
+    try {
+      const base = String(trustBaseUrl).replace(/\/+$/, '');
+      const response = await fetch(`${base}/lists/${territory.toLowerCase()}.xml`);
+      if (!response.ok) {
+        return material;
+      }
+
+      loaded.set(territory, new Uint8Array(await response.arrayBuffer()));
+      material = { ...material, lists: Object.fromEntries(loaded) };
+    } catch {
+      // A list that cannot be fetched leaves qualified status undetermined,
+      // which the report says. It is not a reason to abandon the verification.
+    }
+
+    return material;
+  }
+
   return {
     /** The report contract this build produces. */
     schemaVersion: api.schemaVersion,
@@ -154,14 +185,79 @@ export async function createVerifier(options = {}) {
      * The promise rejects only on an operational failure, such as an archive
      * that cannot be read — which is a tool failure and not a verdict.
      */
-    async verify(input, { verifyAnchors = false, timeoutSeconds = 20 } = {}) {
+    async verify(input, { verifyAnchors = false, timeoutSeconds = 20, sources, anchorEndpoints } = {}) {
       const bytes = await toBytes(input);
 
       return JSON.parse(await api.verify(bytes, {
         verifyAnchors,
         timeoutSeconds,
+        anchorEndpoints,
         trust: material,
+        sources: await toSourceList(sources),
       }));
     },
+
+    /**
+     * verifyTimestamp checks a bare RFC 3161 artifact on its own.
+     *
+     * The token may be a File, bytes, or the base64 or hexadecimal text people
+     * paste. The report carries only the timestamp section: a token is a
+     * statement about a digest and a moment, and nothing about a proof, its
+     * files or its anchors is present to report on.
+     */
+    async verifyTimestamp(token, { imprint, chain, revocation, timeoutSeconds = 20 } = {}) {
+      const artifact = typeof token === 'string' ? token : await toBytes(token);
+
+      // Fetch the list covering whoever signed this, rather than all of them.
+      const trust = await withTerritory(await api.requiredTerritory(artifact).catch(() => null));
+
+      return JSON.parse(await api.verifyTimestamp(artifact, {
+        timeoutSeconds,
+        trust,
+        imprint,
+        chain,
+        revocation,
+      }));
+    },
+
+    /**
+     * inspectTimestamp decodes a token without judging it. Reading a token and
+     * believing it are different acts; verifyTimestamp is the second.
+     */
+    async inspectTimestamp(token) {
+      const artifact = typeof token === 'string' ? token : await toBytes(token);
+
+      return JSON.parse(await api.inspectTimestamp(artifact));
+    },
+
+    /**
+     * requiredTerritory names the national Trusted List a token needs, for a
+     * host deciding which one to serve.
+     */
+    async requiredTerritory(token) {
+      const artifact = typeof token === 'string' ? token : await toBytes(token);
+
+      return api.requiredTerritory(artifact);
+    },
+
+    /**
+     * verifyMerkle answers a question about the Merkle profile alone: rebuild a
+     * root from digests, or check that one leaf belongs to a tree.
+     */
+    async verifyMerkle(input) {
+      return JSON.parse(await api.verifyMerkle(input));
+    },
   };
+}
+
+/** toSourceList reads the original files a caller supplied beside a certificate. */
+async function toSourceList(files) {
+  if (!files?.length) {
+    return null;
+  }
+
+  return Promise.all([...files].map(async (f) => ({
+    name: f.name ?? '',
+    content: await toBytes(f),
+  })));
 }

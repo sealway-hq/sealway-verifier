@@ -41,6 +41,12 @@ type Proof struct {
 
 	// TSA is the throwaway authority that signed the token.
 	TSA *TSA
+
+	// Chain and Revocation are the long term validation material embedded in the
+	// certificate, exposed so that a caller verifying the token on its own can
+	// be handed exactly what the certificate carries.
+	Chain      []byte
+	Revocation [][]byte
 }
 
 // Options configures a generated proof.
@@ -61,6 +67,9 @@ type Options struct {
 	OmitManifest bool
 	// OmitToken leaves the timestamp artifact out of the certificate.
 	OmitToken bool
+	// TSA supplies a pre-built authority instead of generating one, which lets a
+	// test control the certificates the token is signed with.
+	TSA *TSA
 	// Revocation embeds long term validation evidence in the certificate: the
 	// certification path and a signed statement of the signing certificate's
 	// revocation status. Nil embeds none, which is what a proof made before the
@@ -142,7 +151,11 @@ func New(opts Options) (*Proof, error) {
 		return nil, err
 	}
 
-	tsa, err := NewTSA()
+	tsa := opts.TSA
+	if tsa == nil {
+		tsa, err = NewTSA()
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +197,11 @@ func New(opts Options) (*Proof, error) {
 		})
 	}
 
+	var (
+		chain      []byte
+		revocation [][]byte
+	)
+
 	if opts.Revocation != nil {
 		evidence, rErr := tsa.revocationEvidence(*opts.Revocation)
 		if rErr != nil {
@@ -191,6 +209,15 @@ func New(opts Options) (*Proof, error) {
 		}
 
 		attachments = append(attachments, evidence...)
+
+		for _, a := range evidence {
+			switch a.Name {
+			case ChainAttachmentName:
+				chain = a.Content
+			case RevocationAttachmentName:
+				revocation = append(revocation, a.Content)
+			}
+		}
 	}
 
 	cert, err := BuildCertificate(opts.PublicID, attachments)
@@ -207,6 +234,8 @@ func New(opts Options) (*Proof, error) {
 		MerkleRoot:      root,
 		AccumulatorRoot: accRoot,
 		TSA:             tsa,
+		Chain:           chain,
+		Revocation:      revocation,
 	}, nil
 }
 

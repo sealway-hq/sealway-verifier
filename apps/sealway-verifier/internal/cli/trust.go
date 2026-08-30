@@ -24,10 +24,11 @@ import (
 )
 
 type trustFlags struct {
-	territories []string
-	timeout     time.Duration
-	lotlURL     string
-	listURL     string
+	territories    []string
+	allTerritories bool
+	timeout        time.Duration
+	lotlURL        string
+	listURL        string
 }
 
 func newTrustCommand(streams Streams) *cobra.Command {
@@ -69,6 +70,8 @@ func newTrustFetchCommand(streams Streams) *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringArrayVar(&f.territories, "territory", nil,
 		"scheme territory to fetch, such as ES (repeatable; defaults to ES)")
+	flags.BoolVar(&f.allTerritories, "all-territories", false,
+		"fetch every national list the European list of lists points at")
 	flags.DurationVar(&f.timeout, "timeout", 2*time.Minute,
 		"maximum duration of the whole retrieval")
 	flags.StringVar(&f.lotlURL, "lotl-url", bootstrap.LOTLLocation,
@@ -97,6 +100,22 @@ func runTrustFetch(ctx context.Context, dir string, f *trustFlags, streams Strea
 		return &exitError{code: ExitError, err: err}
 	}
 
+	if f.allTerritories {
+		// Asked from the signed list of lists rather than hard coded, so a member
+		// state added next year is picked up without a release here.
+		discovered, tErr := fetcher.Territories(ctx)
+		if tErr != nil {
+			return &exitError{code: ExitError, err: tErr}
+		}
+
+		territories = discovered
+
+		fmt.Fprintf(streams.Out, "the European list of lists points at %d national lists\n",
+			len(territories))
+	}
+
+	var skipped []string
+
 	combined := &trust.Material{Lists: map[string][]byte{}}
 	sources := map[string]string{"lotl": f.lotlURL}
 
@@ -108,6 +127,17 @@ func runTrustFetch(ctx context.Context, dir string, f *trustFlags, streams Strea
 
 		material, err := fetcher.Material(ctx, trust.Request{Territory: territory})
 		if err != nil {
+			// A territory the operator named is one they need, so failing to get
+			// it is a failure. Sweeping every territory the Union publishes is a
+			// different intent: one member state being unreachable must not cost
+			// the other twenty-nine, and the snapshot says which are missing.
+			if f.allTerritories {
+				fmt.Fprintf(streams.Err, "  %s could not be fetched: %v\n", territory, err)
+				skipped = append(skipped, territory)
+
+				continue
+			}
+
 			return &exitError{
 				code: ExitError,
 				err:  fmt.Errorf("cannot fetch the Trusted List for %s: %w", territory, err),
@@ -122,6 +152,11 @@ func runTrustFetch(ctx context.Context, dir string, f *trustFlags, streams Strea
 		}
 
 		fmt.Fprintf(streams.Out, "fetched and authenticated the %s Trusted List\n", territory)
+	}
+
+	if len(skipped) > 0 {
+		fmt.Fprintf(streams.Out, "\n%d list(s) could not be fetched and are absent from the "+
+			"snapshot: %s\n", len(skipped), strings.Join(skipped, ", "))
 	}
 
 	if len(combined.LOTL) == 0 {
