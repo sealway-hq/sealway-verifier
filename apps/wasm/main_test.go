@@ -587,3 +587,73 @@ func productionToken(t *testing.T) []byte {
 
 	return nil
 }
+
+// TestVerifyTimestampAcceptsAHexadecimalImprint covers a shape the types
+// declare, which is the only reason a caller would try it.
+//
+// A digest is as often written down as it is held: a page reading one out of a
+// report or a URL has a string, and refusing it made the declaration a lie.
+func TestVerifyTimestampAcceptsAHexadecimalImprint(t *testing.T) {
+	token := productionToken(t)
+
+	imprint := "9c2a8e4b" // wrong on purpose: what matters is that it is read
+	value, err := await(t, call("verifyTimestamp", bytesValue(token),
+		js.ValueOf(map[string]any{"imprint": imprint})))
+	require.NoError(t, err, "a hexadecimal imprint is a declared shape")
+
+	c := checkOf(t, decode(t, value), "timestamp.imprint")
+	assert.Equal(t, "invalid", c["status"], "it was compared, and it does not match")
+
+	// The same digest as bytes reaches the same conclusion.
+	value, err = await(t, call("verifyTimestamp", bytesValue(token),
+		js.ValueOf(map[string]any{"imprint": bytesValue([]byte{0x9c, 0x2a, 0x8e, 0x4b})})))
+	require.NoError(t, err)
+	assert.Equal(t, "invalid", checkOf(t, decode(t, value), "timestamp.imprint")["status"])
+
+	// Text that is not a digest is refused before anything is concluded.
+	_, err = await(t, call("verifyTimestamp", bytesValue(token),
+		js.ValueOf(map[string]any{"imprint": "not hexadecimal"})))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hexadecimal")
+}
+
+// TestSourcesAreNamedWhenTheyCannotBeRead keeps a source that failed to load
+// from being reported as a file the proof does not cover.
+func TestSourcesAreNamedWhenTheyCannotBeRead(t *testing.T) {
+	cert := productionCertificate(t)
+
+	t.Run("a source without a name", func(t *testing.T) {
+		_, err := await(t, call("verify", bytesValue(cert), js.ValueOf(map[string]any{
+			"verifyAnchors": false,
+			"sources":       []any{map[string]any{"content": bytesValue([]byte("x"))}},
+		})))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "has no name")
+	})
+
+	t.Run("a source with no content", func(t *testing.T) {
+		_, err := await(t, call("verify", bytesValue(cert), js.ValueOf(map[string]any{
+			"verifyAnchors": false,
+			"sources":       []any{map[string]any{"name": "a.pdf", "content": bytesValue(nil)}},
+		})))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "empty")
+	})
+}
+
+// checkOf returns one check of a decoded report.
+func checkOf(t *testing.T, report map[string]any, id string) map[string]any {
+	t.Helper()
+
+	for _, s := range report["sections"].([]any) {
+		for _, c := range s.(map[string]any)["checks"].([]any) {
+			if m := c.(map[string]any); m["id"] == id {
+				return m
+			}
+		}
+	}
+
+	t.Fatalf("the report carries no check %q", id)
+
+	return nil
+}

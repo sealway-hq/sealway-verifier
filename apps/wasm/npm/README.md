@@ -53,6 +53,18 @@ the file dependent steps as skipped. Add the files to close that gap:
 await verifier.verify(certificate, { sources: [...fileInput.files] });
 ```
 
+A source may be a `File`, as a picker or a drop hands it over, or
+`{name, content}` when you already hold the bytes. The name matters: a certified
+item is matched by the name of the file that produced it, so a source without one
+is refused rather than silently reported as a file the proof does not cover.
+
+**A certificate with its files gives 24 checks where the bundle gives 25**, and
+the difference is not a gap. The extra one is `certificate.loose_copies`, which
+compares the convenience copies of the manifest and the token that a bundle
+carries beside the certificate. A certificate on its own has none, so there is
+nothing to compare. Everything the files make possible — the source digests, the
+rebuilt Merkle tree — is verified identically either way.
+
 **Pass `verifyAnchors: true` for a complete verification.** It defaults to
 `false` so that importing this package never makes an outbound request nobody
 asked for — but the blockchain anchors are part of the proof, and leaving them

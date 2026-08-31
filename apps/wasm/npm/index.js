@@ -250,14 +250,35 @@ export async function createVerifier(options = {}) {
   };
 }
 
-/** toSourceList reads the original files a caller supplied beside a certificate. */
+/**
+ * toSourceList reads the original files supplied beside a certificate.
+ *
+ * Both declared shapes are accepted: a File as a picker or a drop hands it over,
+ * and `{name, content}` for a caller that already holds the bytes. Anything else
+ * is refused by name, because a source that quietly failed to load would be
+ * reported as a file the proof does not cover.
+ */
 async function toSourceList(files) {
   if (!files?.length) {
     return null;
   }
 
-  return Promise.all([...files].map(async (f) => ({
-    name: f.name ?? '',
-    content: await toBytes(f),
-  })));
+  return Promise.all([...files].map(async (f, i) => {
+    const named = f?.name ?? '';
+
+    // A `{name, content}` entry: the bytes are the content, not the entry.
+    const payload = f && typeof f.arrayBuffer !== 'function' && 'content' in f ? f.content : f;
+
+    if (payload == null) {
+      throw new TypeError(`sources[${i}]${named ? ` (${named})` : ''} carries no content`);
+    }
+
+    if (!named) {
+      throw new TypeError(
+        `sources[${i}] has no name, and a certified item is matched by the name of the file ` +
+        'that produced it');
+    }
+
+    return { name: named, content: await toBytes(payload) };
+  }));
 }
