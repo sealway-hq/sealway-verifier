@@ -7,7 +7,6 @@ package cli
 import (
 	"context"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -264,15 +263,20 @@ func openInput(path string, f *verifyFlags) (verifier.Input, func(), error) {
 
 	switch kind {
 	case inputBundle:
-		if len(f.sources) > 0 || f.sourcesDir != "" {
+		// A bundle usually carries its own files, but one that ships a certificate
+		// and nothing else does not, and then supplying them is the only way to
+		// reach a complete verdict. A file the archive already holds is refused
+		// rather than silently preferred over the other.
+		sources, err := collectSources(f)
+		if err != nil {
 			closeFile()
 
-			return verifier.Input{}, noop, errors.New(
-				"a proof bundle already carries its original files, so --source and --sources-dir " +
-					"cannot be used with one")
+			return verifier.Input{}, noop, err
 		}
 
-		return verifier.Input{Bundle: file, BundleSize: info.Size()}, closeFile, nil
+		return verifier.Input{
+			Bundle: file, BundleSize: info.Size(), Sources: sources,
+		}, closeFile, nil
 
 	case inputCertificate:
 		sources, err := collectSources(f)

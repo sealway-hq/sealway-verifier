@@ -93,7 +93,7 @@ func verify(_ js.Value, args []js.Value) any {
 		switch container(proof) {
 		case containerBundle:
 			report, err = v.VerifyBundle(context.Background(),
-				bytes.NewReader(proof), int64(len(proof)))
+				bytes.NewReader(proof), int64(len(proof)), sources...)
 		case containerCertificate:
 			report, err = v.VerifyCertificate(context.Background(),
 				bytes.NewReader(proof), sources)

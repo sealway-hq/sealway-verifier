@@ -156,9 +156,15 @@ export interface SourceFile {
 
 export interface VerifyOptions {
   /**
-   * Original files certified by the proof, supplied beside a certificate rather
-   * than zipped under `files/`. Without them the file dependent steps are
-   * reported as skipped and the run is partial.
+   * Original files certified by the proof, supplied beside it rather than zipped
+   * under `files/`. Accepted beside a certificate and beside a bundle alike: an
+   * archive that ships a certificate and nothing else carries no files of its
+   * own. Without them the file dependent steps are reported as skipped and the
+   * run is partial.
+   *
+   * Only the file name is read, so `files/report.pdf` designates the same
+   * certified item as `report.pdf`. A file whose name the archive already
+   * carries is refused rather than resolved.
    */
   sources?: Array<File | SourceFile>;
   /**

@@ -15,6 +15,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
+	"path/filepath"
 	"strings"
 	"syscall/js"
 
@@ -349,6 +351,11 @@ func toSources(v js.Value) ([]verifier.Source, error) {
 				"sources[%d] has no name, and a certified item is matched by the name of the file "+
 					"that produced it", i)
 		}
+
+		// A certified item is named by its file, not by where a copy of it sat, so
+		// "files/report.pdf" designates the same item as "report.pdf". This is what
+		// source.FromPath does for the command line tool.
+		name = path.Base(filepath.ToSlash(name))
 
 		data, err := toBytes(item.Get("content"))
 		if err != nil {

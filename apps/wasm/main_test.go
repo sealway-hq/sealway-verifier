@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall/js"
@@ -656,4 +657,118 @@ func checkOf(t *testing.T, report map[string]any, id string) map[string]any {
 	t.Fatalf("the report carries no check %q", id)
 
 	return nil
+}
+
+// TestSourcesReachTheBundlePath covers the archive a person is actually given
+// when the originals were too large to travel with the proof: a certificate, and
+// nothing else.
+//
+// The option was accepted and dropped on this path, which is worse than
+// refusing it: a caller was told their files had been considered when they had
+// not, and the run reported the item as one the proof does not cover.
+func TestSourcesReachTheBundlePath(t *testing.T) {
+	name, content := productionSource(t)
+	archive := certificateOnlyArchive(t)
+
+	bare := decode(t, mustAwait(t, call("verify", bytesValue(archive),
+		js.ValueOf(map[string]any{"verifyAnchors": false}))))
+	require.Equal(t, "skipped", checkOf(t, bare, "sources.availability")["status"])
+
+	for label, supplied := range map[string]string{
+		"the name the manifest uses": name,
+		"the path inside a bundle":   "files/" + name,
+	} {
+		t.Run(label, func(t *testing.T) {
+			report := decode(t, mustAwait(t, call("verify", bytesValue(archive),
+				js.ValueOf(map[string]any{
+					"verifyAnchors": false,
+					"sources": []any{map[string]any{
+						"name": supplied, "content": bytesValue(content),
+					}},
+				}))))
+
+			assert.Equal(t, "valid", checkOf(t, report, "sources.availability")["status"])
+			assert.Equal(t, "valid", checkOf(t, report, "sources.item.0")["status"])
+			assert.Equal(t, "valid", checkOf(t, report, "proof_merkle.leaf_hashes")["status"])
+		})
+	}
+}
+
+// TestSuppliedSourcesAreHashedNotBelieved is the half that makes the other one
+// mean something.
+func TestSuppliedSourcesAreHashedNotBelieved(t *testing.T) {
+	name, content := productionSource(t)
+
+	tampered := append([]byte(nil), content...)
+	tampered[0] ^= 0xff
+
+	report := decode(t, mustAwait(t, call("verify", bytesValue(certificateOnlyArchive(t)),
+		js.ValueOf(map[string]any{
+			"verifyAnchors": false,
+			"sources": []any{map[string]any{
+				"name": name, "content": bytesValue(tampered),
+			}},
+		}))))
+
+	assert.Equal(t, "invalid", checkOf(t, report, "sources.item.0")["status"])
+}
+
+// certificateOnlyArchive rebuilds the production bundle keeping its certificate
+// and dropping everything else.
+func certificateOnlyArchive(t *testing.T) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+
+	zw := zip.NewWriter(&buf)
+
+	w, err := zw.Create("certificate.pdf")
+	require.NoError(t, err)
+
+	_, err = w.Write(productionCertificate(t))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+
+	return buf.Bytes()
+}
+
+// productionSource returns one original file the production bundle carries,
+// under the name the manifest certifies it by.
+func productionSource(t *testing.T) (string, []byte) {
+	t.Helper()
+
+	proof := productionProof(t)
+
+	zr, err := zip.NewReader(bytes.NewReader(proof), int64(len(proof)))
+	require.NoError(t, err)
+
+	for _, f := range zr.File {
+		if !strings.HasPrefix(f.Name, "files/") || strings.HasSuffix(f.Name, "/") {
+			continue
+		}
+
+		rc, err := f.Open()
+		require.NoError(t, err)
+
+		defer rc.Close()
+
+		data, err := io.ReadAll(rc)
+		require.NoError(t, err)
+
+		return path.Base(f.Name), data
+	}
+
+	t.Fatal("the production bundle carries no original files")
+
+	return "", nil
+}
+
+// mustAwait resolves a promise the test expects to succeed.
+func mustAwait(t *testing.T, v js.Value) js.Value {
+	t.Helper()
+
+	out, err := await(t, v)
+	require.NoError(t, err)
+
+	return out
 }

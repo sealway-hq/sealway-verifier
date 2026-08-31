@@ -251,7 +251,7 @@ export async function createVerifier(options = {}) {
 }
 
 /**
- * toSourceList reads the original files supplied beside a certificate.
+ * toSourceList reads the original files supplied beside a proof.
  *
  * Both declared shapes are accepted: a File as a picker or a drop hands it over,
  * and `{name, content}` for a caller that already holds the bytes. Anything else

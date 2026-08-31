@@ -362,3 +362,39 @@ func TestInputKindIsSniffed(t *testing.T) {
 	res = run(t, "verify", write(t, filepath.Join(dir, "proof.zip"), p.Certificate), "--offline")
 	assert.Equal(t, cli.ExitPartialValid, res.code)
 }
+
+// TestVerifyBundleWithoutItsFilesAcceptsASource covers the archive that ships a
+// certificate and nothing else, which the CLI used to refuse to combine with
+// --source on the false premise that every bundle carries its own files.
+func TestVerifyBundleWithoutItsFilesAcceptsASource(t *testing.T) {
+	t.Parallel()
+
+	p, dir := proofOnDisk(t, prooftest.Options{Files: prooftest.DefaultFiles(1)})
+
+	stripped, err := p.Bundle(prooftest.BundleOptions{OmitSources: true})
+	require.NoError(t, err)
+
+	archive := filepath.Join(dir, "certificate-only.zip")
+	write(t, archive, stripped)
+
+	res := run(t, "verify", archive, "--offline",
+		"--source", filepath.Join(dir, "files", p.Files[0].Name))
+
+	assert.Equal(t, cli.ExitPartialValid, res.code)
+	assert.Contains(t, res.stdout, p.Files[0].Name)
+}
+
+// TestVerifyBundleRefusesASourceItAlreadyCarries keeps the ambiguity an
+// operational error rather than a verdict: two different files cannot both be
+// the same certified item.
+func TestVerifyBundleRefusesASourceItAlreadyCarries(t *testing.T) {
+	t.Parallel()
+
+	p, dir := proofOnDisk(t, prooftest.Options{Files: prooftest.DefaultFiles(1)})
+
+	res := run(t, "verify", filepath.Join(dir, "proof.zip"), "--offline",
+		"--source", filepath.Join(dir, "files", p.Files[0].Name))
+
+	assert.Equal(t, cli.ExitError, res.code)
+	assert.Contains(t, res.stderr, p.Files[0].Name)
+}

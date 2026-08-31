@@ -111,18 +111,32 @@ func (v *Verifier) Verify(ctx context.Context, in Input) (*Report, error) {
 	}
 
 	if in.Bundle != nil {
-		return v.VerifyBundle(ctx, in.Bundle, in.BundleSize)
+		return v.VerifyBundle(ctx, in.Bundle, in.BundleSize, in.Sources...)
 	}
 
 	return v.VerifyCertificate(ctx, in.Certificate, in.Sources)
 }
 
-// VerifyBundle verifies a proof bundle archive.
+// VerifyBundle verifies a proof bundle archive, together with any original files
+// the caller supplies beside it.
 //
 // The archive is read without ever extracting anything to disk. Its certificate
 // is located deterministically and provides the authoritative manifest and
 // timestamp token; the files it carries provide the original sources.
-func (v *Verifier) VerifyBundle(ctx context.Context, ra io.ReaderAt, size int64) (*Report, error) {
+//
+// Supplied sources exist for the archive that ships a certificate and nothing
+// else, which is what a person is given when the originals were too large to
+// travel with the proof. Where the bytes came from is transport: a supplied file
+// is hashed and matched exactly as one carried inside the archive is, and is
+// never taken on the caller's word.
+//
+// A supplied file whose name the archive already carries is refused rather than
+// resolved. Two different byte streams cannot both be the same certified item,
+// and preferring either one would hide that the caller handed over a file which
+// is not the certified original.
+func (v *Verifier) VerifyBundle(
+	ctx context.Context, ra io.ReaderAt, size int64, supplied ...Source,
+) (*Report, error) {
 	if ra == nil || size <= 0 {
 		return nil, fmt.Errorf("%w: a readable proof bundle is required", ErrInvalidInput)
 	}
@@ -142,9 +156,12 @@ func (v *Verifier) VerifyBundle(ctx context.Context, ra io.ReaderAt, size int64)
 		return nil, err
 	}
 
-	sources := make([]Source, 0, len(b.Sources()))
+	sources := make([]Source, 0, len(b.Sources())+len(supplied))
+	carried := make(map[string]struct{}, len(b.Sources()))
 
 	for _, e := range b.Sources() {
+		carried[e.Base()] = struct{}{}
+
 		sources = append(sources, Source{
 			Name: e.Base(),
 			Size: e.Size,
@@ -154,6 +171,16 @@ func (v *Verifier) VerifyBundle(ctx context.Context, ra io.ReaderAt, size int64)
 			Explicit: true,
 			Open:     e.Open,
 		})
+	}
+
+	for _, s := range supplied {
+		if _, clash := carried[s.Name]; clash {
+			return nil, fmt.Errorf(
+				"%w: the archive already carries a file named %q, and two different files cannot "+
+					"both be the same certified item", ErrInvalidInput, s.Name)
+		}
+
+		sources = append(sources, s)
 	}
 
 	r := newRun(v.opts, sources)

@@ -56,7 +56,20 @@ await verifier.verify(certificate, { sources: [...fileInput.files] });
 A source may be a `File`, as a picker or a drop hands it over, or
 `{name, content}` when you already hold the bytes. The name matters: a certified
 item is matched by the name of the file that produced it, so a source without one
-is refused rather than silently reported as a file the proof does not cover.
+is refused rather than silently reported as a file the proof does not cover. Only
+the file name is read, so `files/report.pdf` designates the same item as
+`report.pdf`.
+
+Sources work beside a **bundle** as well as beside a certificate. An archive that
+ships a certificate and nothing else carries no files of its own, and supplying
+them is then the only way to reach a complete verdict. A file whose name the
+archive already carries is refused rather than resolved: two different files
+cannot both be the same certified item, and preferring either one would hide that
+the file you supplied is not the certified original.
+
+Supplied files are never taken on your word. They are hashed and matched exactly
+as files carried inside an archive are, so handing over the wrong file reports
+`invalid` rather than passing.
 
 **A certificate with its files gives 24 checks where the bundle gives 25**, and
 the difference is not a gap. The extra one is `certificate.loose_copies`, which
