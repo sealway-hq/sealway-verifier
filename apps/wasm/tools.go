@@ -82,7 +82,9 @@ func verifyTimestamp(_ js.Value, args []js.Value) any {
 
 	in := verifier.TimestampInput{Token: token}
 
-	if in.Imprint, err = toBytes(options.Get("imprint")); err != nil {
+	// Declared as bytes or hexadecimal, because a digest is as often written down
+	// as it is held: toDigest reads either.
+	if in.Imprint, err = toDigest(options.Get("imprint")); err != nil {
 		return rejected(fmt.Errorf("imprint: %w", err).Error())
 	}
 
@@ -335,11 +337,26 @@ func toSources(v js.Value) ([]verifier.Source, error) {
 	for i := range v.Length() {
 		item := v.Index(i)
 
-		name := item.Get("name").String()
+		// String() on an absent property yields "<undefined>" rather than "", so
+		// the type is what says whether a name was given at all.
+		var name string
+		if v := item.Get("name"); v.Type() == js.TypeString {
+			name = v.String()
+		}
+
+		if name == "" {
+			return nil, fmt.Errorf(
+				"sources[%d] has no name, and a certified item is matched by the name of the file "+
+					"that produced it", i)
+		}
 
 		data, err := toBytes(item.Get("content"))
 		if err != nil {
 			return nil, fmt.Errorf("sources[%d] (%s): %w", i, name, err)
+		}
+
+		if len(data) == 0 {
+			return nil, fmt.Errorf("sources[%d] (%s) is empty", i, name)
 		}
 
 		out = append(out, verifier.Source{
