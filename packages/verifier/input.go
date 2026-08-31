@@ -44,7 +44,10 @@ type Input struct {
 	BundleSize int64
 	// Certificate is a Sealway certificate document.
 	Certificate io.ReadSeeker
-	// Sources are the original files supplied alongside the certificate.
+	// Sources are the original files supplied alongside the proof, whether that
+	// proof is a certificate or a bundle. A bundle that ships a certificate and
+	// nothing else carries no files of its own, so supplying them is the only way
+	// to reach a complete verdict on one.
 	Sources []Source
 }
 
@@ -59,8 +62,6 @@ func (in Input) validate() error {
 		return errors.New("verifier: a proof bundle and a certificate cannot be verified together")
 	case in.Bundle != nil && in.BundleSize <= 0:
 		return errors.New("verifier: the proof bundle size must be known")
-	case in.Bundle != nil && len(in.Sources) > 0:
-		return errors.New("verifier: a proof bundle already carries its original files")
 	}
 
 	for i, s := range in.Sources {

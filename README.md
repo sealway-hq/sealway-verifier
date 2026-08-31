@@ -103,6 +103,10 @@ sealway-verifier verify certificate.pdf --source document.pdf
 sealway-verifier verify certificate.pdf --source file1.pdf --source photo.jpg
 sealway-verifier verify certificate.pdf --sources-dir ./files
 
+# A bundle that ships a certificate and nothing else, which is what you are
+# given when the originals were too large to travel with the proof
+sealway-verifier verify proof.zip --sources-dir ./files
+
 # Without any network access
 sealway-verifier verify proof.zip --offline
 
@@ -148,6 +152,13 @@ A file you name explicitly with `--source`, or that a bundle carries in its
 certified item is reported as a failure. A file merely discovered by
 `--sources-dir` is disregarded instead, because a directory may legitimately hold
 unrelated files.
+
+Supplied files are accepted beside a bundle as well as beside a certificate: an
+archive that ships a certificate and nothing else carries no files of its own,
+and supplying them is then the only way to reach a complete verdict. A file whose
+name the archive already carries is refused rather than resolved, because two
+different files cannot both be the same certified item and preferring either one
+would hide that the file you supplied is not the certified original.
 
 ---
 

@@ -875,11 +875,6 @@ func TestVerifyInputValidation(t *testing.T) {
 			Certificate: bytes.NewReader([]byte("x")),
 		},
 		"bundle without size": {Bundle: bytes.NewReader([]byte("x"))},
-		"bundle with sources": {
-			Bundle:     bytes.NewReader([]byte("x")),
-			BundleSize: 1,
-			Sources:    []verifier.Source{{Name: "a", Open: func() (io.ReadCloser, error) { return nil, nil }}},
-		},
 		"source without name": {
 			Certificate: bytes.NewReader([]byte("x")),
 			Sources:     []verifier.Source{{Open: func() (io.ReadCloser, error) { return nil, nil }}},
